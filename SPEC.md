@@ -215,6 +215,61 @@ For example, the SQLite and Postgres drivers implement `Explainer`. To add a new
 optional capability, define the interface here and type-assert it at the call
 site — existing drivers don't need to change.
 
+### Provisioner — create a new database
+
+A driver MAY implement `Provisioner` to let sqwee create a brand-new database
+for that engine (the "Initialize database" wizard, bound to `i`). It is
+discovered via `driver.AsProvisioner(name)` / `driver.Provisioners()`:
+
+```go
+type Provisioner interface {
+    // ProvisionModes returns the strategies this driver offers (>= 1).
+    ProvisionModes() []ProvisionMode
+    // Provision creates the database for the chosen mode using the collected
+    // field values, returning a connection to the new database.
+    Provision(ctx context.Context, mode string, values map[string]string) (ProvisionResult, error)
+}
+
+type ProvisionMode struct {
+    ID     string           // "file", "server", "docker"
+    Label  string           // human description shown in the wizard
+    Fields []ProvisionField // inputs to collect for this mode
+}
+
+type ProvisionField struct {
+    Key         string   // map key passed to Provision ("host", "db_name", ...)
+    Label       string
+    Default     string
+    Placeholder string
+    Options     []string // non-empty => selector field
+    Password    bool     // masked; never persisted
+    Optional    bool
+}
+
+type ProvisionResult struct {
+    Info         ConnInfo // connection to the new DB (Password left empty)
+    Steps        []string // human log shown in the summary
+    Container    string   // docker container name, or ""
+    PasswordHint string   // suggested env-var name / generated docker password
+}
+```
+
+The wizard builds its form fields from the selected mode's `Fields`, then calls
+`Provision(ctx, mode.ID, values)`. On success sqwee saves the returned
+`ConnInfo` as a connection (password referenced by env-var name), adds it to the
+list, and auto-connects.
+
+**Provisioning helpers** in the `driver` package make this easy to implement:
+
+- `serverProvisionSpec` + `provisionServer` / `provisionDocker` — connect to a
+  maintenance database and run `CREATE DATABASE`, or start a Docker container
+  first. The three server drivers share this.
+- `dockerAvailable()` and `runDockerContainer()` shell out to the `docker` CLI
+  (no Docker SDK dependency), and `waitForServer()` polls `Connect`+`Ping` until
+  a freshly-started server is ready.
+- `quotePostgres` / `quoteMySQL` / `quoteMSSQLIdent` safely quote the new
+  database name.
+
 ---
 
 ## Built-in Drivers
@@ -228,6 +283,8 @@ site — existing drivers don't need to change.
 - **Introspection:** `information_schema` + `pg_catalog`; views via
   `pg_get_viewdef`, routines via `pg_get_functiondef`.
 - Implements `Explainer`.
+- Implements `Provisioner` — `server` (connect to the `postgres` maintenance DB,
+  `CREATE DATABASE`) and `docker` (`postgres:16`) modes.
 
 ### MySQL / MariaDB (`mysql`)
 
@@ -236,6 +293,8 @@ site — existing drivers don't need to change.
 - **Connect:** builds a DSN with `parseTime=true`. A "schema" is a database.
 - **Introspection:** `information_schema`; definitions via `SHOW CREATE ...`.
 - Implements `Explainer`.
+- Implements `Provisioner` — `server` (connect with no default DB,
+  `CREATE DATABASE`) and `docker` (`mysql:8`) modes.
 
 ### SQLite (`sqlite`)
 
@@ -245,6 +304,8 @@ site — existing drivers don't need to change.
   or `info.Host`). Reports a single schema, `main`.
 - **Introspection:** `sqlite_master` + `PRAGMA table_info`.
 - Implements `Explainer` (`EXPLAIN QUERY PLAN`).
+- Implements `Provisioner` — a single `file` mode (opening a new path creates
+  the file). Refuses to overwrite an existing file.
 
 ### SQL Server (`mssql`)
 
@@ -261,6 +322,9 @@ site — existing drivers don't need to change.
   batch separators before sending them, so T-SQL setup scripts run as-is.
 - **Introspection:** `sys.databases` + `information_schema`; definitions via
   `OBJECT_DEFINITION`.
+- Implements `Provisioner` — `server` (connect to `master`, `CREATE DATABASE`)
+  and `docker` (`mcr.microsoft.com/mssql/server:2022-latest`) modes. Docker
+  generates a complexity-compliant SA password.
 
 ---
 

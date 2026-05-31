@@ -44,6 +44,7 @@ type ConfigKeys struct {
 	Connect    string `toml:"connect"`
 	Refresh    string `toml:"refresh"`
 	CopyItem   string `toml:"copy_item"`
+	InitDB     string `toml:"init_db"` // initialize/provision a new database
 
 	// ── Results grid ─────────────────────────────────────────────────────────
 	SelectMode  string `toml:"select_mode"`  // cycle cell/row/column/all selection
@@ -102,6 +103,7 @@ func defaultConfig() Config {
 			Connect:     "c",
 			Refresh:     "r",
 			CopyItem:    "y",
+			InitDB:      "i",
 			SelectMode:  "v",
 			CopyHeaders: "Y",
 			Export:      "X",
@@ -280,6 +282,7 @@ func buildConfigTOML(cfg Config) string {
 		"connect      = " + q(k.Connect) + "       # connect to selected connection\n" +
 		"refresh      = " + q(k.Refresh) + "       # refresh schema / reconnect\n" +
 		"copy_item    = " + q(k.CopyItem) + "       # copy focused content to clipboard\n" +
+		"init_db      = " + q(k.InitDB) + "       # initialize/provision a new database\n" +
 		"\n" +
 		"# ── Results grid (Query tab) ────────────────────────────────────────────\n" +
 		"select_mode  = " + q(k.SelectMode) + "       # cycle selection: cell -> row -> column -> all\n" +
@@ -327,6 +330,7 @@ type KeyMap struct {
 	Connect     key.Binding
 	Refresh     key.Binding
 	CopyItem    key.Binding
+	InitDB      key.Binding
 	SelectMode  key.Binding
 	CopyHeaders key.Binding
 	Export      key.Binding
@@ -373,6 +377,7 @@ func NewKeyMap(cfg Config) KeyMap {
 		Connect:     bindingFor(k.Connect, "connect"),
 		Refresh:     bindingFor(k.Refresh, "refresh"),
 		CopyItem:    bindingFor(k.CopyItem, "copy"),
+		InitDB:      bindingFor(k.InitDB, "init db"),
 		SelectMode:  bindingFor(k.SelectMode, "select mode"),
 		CopyHeaders: bindingFor(k.CopyHeaders, "copy w/ headers"),
 		Export:      bindingFor(k.Export, "export"),

@@ -247,3 +247,41 @@ func (c *postgresConn) Explain(ctx context.Context, query string) (string, error
 	}
 	return b.String(), nil
 }
+
+// quotePostgres wraps an identifier in double quotes, escaping embedded quotes.
+func quotePostgres(name string) string {
+	return `"` + strings.ReplaceAll(name, `"`, `""`) + `"`
+}
+
+// postgresProvisionSpec describes how to provision a Postgres database.
+func postgresProvisionSpec() serverProvisionSpec {
+	return serverProvisionSpec{
+		driverName:    "postgres",
+		maintenanceDB: "postgres", // can't connect to a DB that doesn't exist yet
+		defaultPort:   5432,
+		dockerImage:   "postgres:16",
+		passwordEnvFn: func(pw string) map[string]string {
+			return map[string]string{"POSTGRES_PASSWORD": pw}
+		},
+		createSQL: func(name string) string { return "CREATE DATABASE " + quotePostgres(name) },
+	}
+}
+
+// ProvisionModes implements the optional Provisioner capability.
+func (d *postgresDriver) ProvisionModes() []ProvisionMode {
+	return []ProvisionMode{
+		{ID: "server", Label: "CREATE DATABASE on a running PostgreSQL server", Fields: serverFields(5432)},
+		{ID: "docker", Label: "Spin up a PostgreSQL Docker container", Fields: dockerFields(5432)},
+	}
+}
+
+// Provision creates a new Postgres database via the chosen mode.
+func (d *postgresDriver) Provision(ctx context.Context, mode string, values map[string]string) (ProvisionResult, error) {
+	spec := postgresProvisionSpec()
+	switch mode {
+	case "docker":
+		return spec.provisionDocker(ctx, values)
+	default:
+		return spec.provisionServer(ctx, values)
+	}
+}

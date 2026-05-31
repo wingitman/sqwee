@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	_ "modernc.org/sqlite" // pure-Go SQLite, no CGO
@@ -137,4 +139,62 @@ func (c *sqliteConn) Explain(ctx context.Context, query string) (string, error) 
 		b.WriteString("\n")
 	}
 	return b.String(), nil
+}
+
+// ─── Provisioner ────────────────────────────────────────────────────────────
+
+// ProvisionModes implements the optional Provisioner capability. SQLite has a
+// single mode: create a new database file.
+func (d *sqliteDriver) ProvisionModes() []ProvisionMode {
+	home, _ := os.UserHomeDir()
+	def := filepath.Join(home, "mydb.sqlite")
+	return []ProvisionMode{
+		{
+			ID:    "file",
+			Label: "New SQLite database file",
+			Fields: []ProvisionField{
+				{Key: "path", Label: "File path", Default: def, Placeholder: "/path/to/db.sqlite"},
+			},
+		},
+	}
+}
+
+// Provision creates a new SQLite database file by opening it (modernc.org/sqlite
+// creates the file on first open) and returns a connection to it.
+func (d *sqliteDriver) Provision(ctx context.Context, mode string, values map[string]string) (ProvisionResult, error) {
+	path := strings.TrimSpace(values["path"])
+	if path == "" {
+		return ProvisionResult{}, fmt.Errorf("sqlite: a file path is required")
+	}
+	if strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, path[2:])
+		}
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		path = abs
+	}
+	if _, err := os.Stat(path); err == nil {
+		return ProvisionResult{}, fmt.Errorf("sqlite: file already exists: %s", path)
+	}
+
+	// Ensure the parent directory exists.
+	if dir := filepath.Dir(path); dir != "" {
+		if err := os.MkdirAll(dir, 0o750); err != nil {
+			return ProvisionResult{}, fmt.Errorf("sqlite: %w", err)
+		}
+	}
+
+	info := ConnInfo{Driver: "sqlite", Database: path}
+	conn, err := d.Connect(ctx, info)
+	if err != nil {
+		return ProvisionResult{}, fmt.Errorf("sqlite: create failed: %w", err)
+	}
+	conn.Close()
+
+	return ProvisionResult{
+		Info:  info,
+		Steps: []string{"Created SQLite database file: " + path},
+	}, nil
 }

@@ -43,6 +43,12 @@ const (
 	ModalNewObject
 	ModalExport
 	ModalConfirm
+
+	// Initialize-database wizard steps.
+	ModalInitPickDriver
+	ModalInitPickMode
+	ModalInitConfigure
+	ModalInitConfirm
 )
 
 // modalConfirmMsg is dispatched when a modal is confirmed.
@@ -53,6 +59,10 @@ type modalConfirmMsg struct {
 
 // modalCancelMsg is dispatched when a modal is cancelled.
 type modalCancelMsg struct{}
+
+// modalCopyMsg is dispatched when the user presses the copy key on a modal that
+// has CopyHint enabled (e.g. the provisioning summary).
+type modalCopyMsg struct{ kind ModalKind }
 
 // Modal is the overlay dialog model.
 type Modal struct {
@@ -66,6 +76,12 @@ type Modal struct {
 	focused int
 	Width   int
 	keys    KeyMap // honoured for navigation/confirm/cancel; remappable
+
+	// Body is optional read-only content rendered above the fields (used by
+	// the provisioning summary/confirm step). CopyHint, when true, shows a
+	// "copy config" hint that maps to the configured copy key.
+	Body     string
+	CopyHint bool
 }
 
 // NewModal creates a modal from the given fields. The KeyMap is honoured for
@@ -176,13 +192,27 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd, bool) {
 		return m, nil, false
 	}
 	s := key.String()
-	onText := m.kinds[m.focused] == FieldText
-	onSelect := m.kinds[m.focused] == FieldSelect
 
 	// Cancel.
 	if keyMatches(key, m.keys.Escape) {
 		return m, func() tea.Msg { return modalCancelMsg{} }, true
 	}
+
+	// Info/summary modal (no input fields): Enter confirms, copy key copies.
+	if len(m.inputs) == 0 {
+		if keyMatches(key, m.keys.Enter) {
+			kind := m.Kind
+			return m, func() tea.Msg { return modalConfirmMsg{kind: kind, values: nil} }, true
+		}
+		if m.CopyHint && keyMatches(key, m.keys.CopyItem) {
+			kind := m.Kind
+			return m, func() tea.Msg { return modalCopyMsg{kind: kind} }, false
+		}
+		return m, nil, false
+	}
+
+	onText := m.kinds[m.focused] == FieldText
+	onSelect := m.kinds[m.focused] == FieldSelect
 
 	// Confirm / advance (Enter).
 	if keyMatches(key, m.keys.Enter) {
@@ -249,6 +279,24 @@ func (m Modal) View() string {
 	var b strings.Builder
 	b.WriteString(modalTitleStyle.Render(m.Title))
 	b.WriteString("\n\n")
+
+	if m.Body != "" {
+		b.WriteString(m.Body)
+		b.WriteString("\n\n")
+	}
+
+	// Info/summary modal (no fields): show confirm/copy/cancel hints only.
+	if len(m.inputs) == 0 {
+		confirm := firstKey(m.keys.Enter, "enter")
+		cancel := firstKey(m.keys.Escape, "esc")
+		hint := confirm + ": confirm   "
+		if m.CopyHint {
+			hint += firstKey(m.keys.CopyItem, "y") + ": copy config   "
+		}
+		hint += cancel + ": cancel"
+		b.WriteString(dimStyle.Render(hint))
+		return modalBorderStyle.Width(m.Width - 4).Render(b.String())
+	}
 
 	for i := range m.inputs {
 		label := m.labels[i]

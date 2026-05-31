@@ -80,7 +80,21 @@ type Model struct {
 	// Modal overlay
 	modal *Modal
 
+	// Initialize-database wizard state (carried across the chained modals).
+	wizard initWizard
+
 	statusMsg string
+}
+
+// initWizard holds state for the multi-step "Initialize database" flow.
+type initWizard struct {
+	active   bool
+	driver   string            // selected driver name
+	mode     string            // selected ProvisionMode ID
+	modeIdx  int               // index into the driver's ProvisionModes
+	connName string            // saved-connection name
+	passEnv  string            // password env-var name for the saved connection
+	values   map[string]string // collected provisioning field values
 }
 
 // activeDriver returns the driver name of the active connection, or "".
@@ -420,7 +434,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case modalCancelMsg:
 		m.modal = nil
+		m.wizard.active = false
 		return m, nil
+
+	case modalCopyMsg:
+		if msg.kind == ModalInitConfirm {
+			return m, copyToClipboardCmd(m.wizardConfigText(), "Config copied.")
+		}
+		return m, nil
+
+	case provisionDoneMsg:
+		return m.finishProvision(msg)
 
 	case tea.PasteMsg:
 		return m.handlePaste(msg)
@@ -653,9 +677,11 @@ func (m Model) renderHintBar() string {
 	case TabConnections:
 		hints = append(hints,
 			pair(m.keys.Connect, "connect"),
+			pair(m.keys.InitDB, "init db"),
 			pair(m.keys.NewItem, "new"),
 			pair(m.keys.EditItem, "edit"),
 			pair(m.keys.DeleteItem, "delete"),
+			pair(m.keys.CopyItem, "copy cfg"),
 		)
 	case TabSchema:
 		if m.filtering {

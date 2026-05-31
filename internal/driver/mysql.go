@@ -229,3 +229,36 @@ func (c *mysqlConn) Explain(ctx context.Context, query string) (string, error) {
 	}
 	return b.String(), nil
 }
+
+// mysqlProvisionSpec describes how to provision a MySQL/MariaDB database.
+func mysqlProvisionSpec() serverProvisionSpec {
+	return serverProvisionSpec{
+		driverName:    "mysql",
+		maintenanceDB: "", // MySQL needs no default database to CREATE DATABASE
+		defaultPort:   3306,
+		dockerImage:   "mysql:8",
+		passwordEnvFn: func(pw string) map[string]string {
+			return map[string]string{"MYSQL_ROOT_PASSWORD": pw}
+		},
+		createSQL: func(name string) string { return "CREATE DATABASE " + quoteMySQL(name) },
+	}
+}
+
+// ProvisionModes implements the optional Provisioner capability.
+func (d *mysqlDriver) ProvisionModes() []ProvisionMode {
+	return []ProvisionMode{
+		{ID: "server", Label: "CREATE DATABASE on a running MySQL/MariaDB server", Fields: serverFields(3306)},
+		{ID: "docker", Label: "Spin up a MySQL Docker container", Fields: dockerFields(3306)},
+	}
+}
+
+// Provision creates a new MySQL database via the chosen mode.
+func (d *mysqlDriver) Provision(ctx context.Context, mode string, values map[string]string) (ProvisionResult, error) {
+	spec := mysqlProvisionSpec()
+	switch mode {
+	case "docker":
+		return spec.provisionDocker(ctx, values)
+	default:
+		return spec.provisionServer(ctx, values)
+	}
+}

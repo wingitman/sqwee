@@ -254,3 +254,43 @@ func (c *mssqlConn) Definition(ctx context.Context, obj DBObject) (string, error
 func quoteMSSQLIdent(name string) string {
 	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"
 }
+
+// mssqlProvisionSpec describes how to provision a SQL Server database.
+func mssqlProvisionSpec() serverProvisionSpec {
+	return serverProvisionSpec{
+		driverName:    "mssql",
+		maintenanceDB: "master", // CREATE DATABASE runs against master
+		defaultPort:   1433,
+		dockerImage:   "mcr.microsoft.com/mssql/server:2022-latest",
+		passwordEnvFn: func(pw string) map[string]string {
+			return map[string]string{"ACCEPT_EULA": "Y", "MSSQL_SA_PASSWORD": pw}
+		},
+		createSQL: func(name string) string { return "CREATE DATABASE " + quoteMSSQLIdent(name) },
+	}
+}
+
+// ProvisionModes implements the optional Provisioner capability.
+func (d *mssqlDriver) ProvisionModes() []ProvisionMode {
+	server := serverFields(1433)
+	// SQL Server's default login is "sa".
+	for i := range server {
+		if server[i].Key == "user" {
+			server[i].Default = "sa"
+		}
+	}
+	return []ProvisionMode{
+		{ID: "server", Label: "CREATE DATABASE on a running SQL Server", Fields: server},
+		{ID: "docker", Label: "Spin up a SQL Server Docker container", Fields: dockerFields(1433)},
+	}
+}
+
+// Provision creates a new SQL Server database via the chosen mode.
+func (d *mssqlDriver) Provision(ctx context.Context, mode string, values map[string]string) (ProvisionResult, error) {
+	spec := mssqlProvisionSpec()
+	switch mode {
+	case "docker":
+		return spec.provisionDocker(ctx, values)
+	default:
+		return spec.provisionServer(ctx, values)
+	}
+}

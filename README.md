@@ -13,6 +13,7 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Glo
 - **Three-tab UI** — Connections, Schema, and Query, cycled with `Tab` / `Shift+Tab`
 - **Auto-discovery** — finds connections in `DATABASE_URL`, `PG*` / `MYSQL_*` env vars, `.env` files (incl. `DATABASE_PATH` SQLite paths), `~/.pgpass`, **local `*.sqlite` / `*.db` files in the working directory**, and **DB servers listening on localhost**
 - **SQL script library** — discovers `*.sql` files in the working directory and lets you load and run them (with T-SQL `GO` batch support)
+- **Initialize a database** — spin up a new database from scratch: a SQLite file, a `CREATE DATABASE` on a running server, or a fresh **Docker container** — then auto-save and connect to it
 - **Saved connections** — persisted to `~/.config/delbysoft/sqwee.json`; passwords referenced by env-var name (not stored in plaintext by default)
 - **Schema browser** — tables, views, functions, and stored procedures with column details; **browse every database on a SQL Server instance**
 - **Query editor** — run arbitrary SQL with a scrollable, NULL-aware results grid; open the editor in `$EDITOR`
@@ -72,7 +73,7 @@ On launch sqwee opens the **Connections** tab. Any connections it discovered fro
 
 | Tab | What it does |
 |-----|--------------|
-| **Connections** | Pick / add / edit / delete connections. Press `c` (or `Enter`) to connect — that connection becomes the active context for the other two tabs. |
+| **Connections** | Pick / add / edit / delete connections. Press `c` (or `Enter`) to connect — that connection becomes the active context for the other two tabs. Press `i` to **initialize a new database** (see below), or `y` to copy the selected connection's config. |
 | **Schema** | Browse tables, views, functions and stored procedures of the active connection. `Enter` previews a table/view or loads an object's definition into the Query tab. |
 | **Query** | Edit and run SQL. `Enter` enters edit mode, `s` runs the statement, `E` opens the editor in `$EDITOR`. Press `Tab` to focus the **results grid** and select cells/rows/columns to copy or export (see below). If `*.sql` files were found, a **Scripts** pane appears on the left (`h` to focus it, `Enter` to load a script). |
 
@@ -86,6 +87,7 @@ On launch sqwee opens the **Connections** tab. Any connections it discovered fro
 | `Enter` | Select / open / enter edit mode |
 | `Esc` | Cancel / back |
 | `c` | Connect to the selected connection |
+| `i` | Initialize / provision a new database |
 | `n` | New connection / object |
 | `e` | Edit selected connection |
 | `d` | Delete selected connection |
@@ -119,6 +121,25 @@ results grid. Then:
 - Press `X` to export the **entire** result set to your `~/Downloads` folder
   as CSV, TSV, or JSON.
 - Press `Shift+Tab` (or `Esc`) to return focus to the editor.
+
+---
+
+## Initializing a database
+
+From the **Connections** tab, press `i` to create a brand-new database from scratch. A short wizard walks you through:
+
+1. **Type** — pick a database engine (only engines whose driver supports provisioning are listed).
+2. **Mode** — how to create it:
+   - **SQLite** → a new database **file**.
+   - **Postgres / MySQL / SQL Server** → either run `CREATE DATABASE` on a **running server**, or spin up a fresh **Docker container** and create the database inside it.
+3. **Configure** — fill in the connection settings (file path, or host/port/admin-user/password/new-database-name).
+4. **Confirm** — review a summary of what will be created. Press `y` to **copy the config** to your clipboard, then `Enter` to proceed.
+
+sqwee then creates the database, **saves a connection** to it (in `sqwee.json`, with the password referenced by an env-var name), adds it to your connection list, and **auto-connects** so its schema appears in the Schema tab.
+
+**Docker mode** requires the `docker` CLI and a running daemon. sqwee runs `docker run` with the official image for the engine (`postgres:16`, `mysql:8`, `mcr.microsoft.com/mssql/server:2022-latest`), waits for the server to accept connections, then issues `CREATE DATABASE`. The container name and generated password are shown in the result. If Docker isn't available, the file/server modes still work.
+
+> Provisioning a server or Docker database **connects to an existing/just-started server** and runs `CREATE DATABASE`. It does not install a database engine on your machine.
 
 ---
 
@@ -171,6 +192,7 @@ delete_item  = "d"
 connect      = "c"
 refresh      = "r"
 copy_item    = "y"
+init_db      = "i"   # initialize/provision a new database
 select_mode  = "v"   # cycle results selection: cell -> row -> column -> all
 copy_headers = "Y"   # copy the results selection including column headers
 export       = "X"   # export results to ~/Downloads (CSV / TSV / JSON)

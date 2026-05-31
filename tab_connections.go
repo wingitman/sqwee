@@ -41,6 +41,10 @@ func (m Model) handleConnectionsKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	case keyMatches(msg, m.keys.NewItem):
 		m.modal = m.newConnectionModal()
 		return m, nil
+	case keyMatches(msg, m.keys.InitDB):
+		return m.startInitWizard()
+	case keyMatches(msg, m.keys.CopyItem):
+		return m.copySelectedConnectionConfig()
 	case keyMatches(msg, m.keys.EditItem):
 		if mod := m.editConnectionModal(); mod != nil {
 			m.modal = mod
@@ -114,6 +118,9 @@ func (m Model) editConnectionModal() *Modal {
 // handleModalConfirm applies a confirmed modal across all tabs.
 func (m Model) handleModalConfirm(msg modalConfirmMsg) (tea.Model, tea.Cmd) {
 	switch msg.kind {
+	case ModalInitPickDriver, ModalInitPickMode, ModalInitConfigure, ModalInitConfirm:
+		return m.handleInitConfirm(msg)
+
 	case ModalAddConnection:
 		v := msg.values
 		port, _ := strconv.Atoi(strings.TrimSpace(v[3]))
@@ -208,6 +215,38 @@ func (m *Model) deleteSelectedConnection() {
 	_ = SaveData(m.data)
 	m.rebuildConnections()
 	m.statusMsg = dimStyle.Render("Deleted connection " + name)
+}
+
+// copySelectedConnectionConfig copies the selected connection's config to the
+// clipboard (password is referenced by env-var name, never the literal secret).
+func (m Model) copySelectedConnectionConfig() (tea.Model, tea.Cmd) {
+	if len(m.conns) == 0 {
+		return m, nil
+	}
+	info := m.conns[m.connCursor].info
+	var b strings.Builder
+	b.WriteString("name = " + info.Name + "\n")
+	b.WriteString("driver = " + info.Driver + "\n")
+	if info.URL != "" {
+		b.WriteString("url = " + maskURL(info.URL) + "\n")
+	} else {
+		if info.Host != "" {
+			b.WriteString("host = " + info.Host + "\n")
+		}
+		if info.Port > 0 {
+			b.WriteString("port = " + strconv.Itoa(info.Port) + "\n")
+		}
+		if info.User != "" {
+			b.WriteString("user = " + info.User + "\n")
+		}
+		if info.Database != "" {
+			b.WriteString("database = " + info.Database + "\n")
+		}
+	}
+	if s := m.savedForCursor(); s != nil && s.PasswordEnv != "" {
+		b.WriteString("password_env = " + s.PasswordEnv + "\n")
+	}
+	return m, copyToClipboardCmd(b.String(), "Connection config copied.")
 }
 
 func (m Model) modalWidth() int {
