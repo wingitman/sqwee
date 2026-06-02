@@ -210,6 +210,74 @@ func (c *mysqlConn) Definition(ctx context.Context, obj DBObject) (string, error
 	}
 }
 
+func (c *mysqlConn) TableMetadata(ctx context.Context, schema, table string) (TableMetadata, error) {
+	var meta TableMetadata
+	idxRows, err := c.db.QueryContext(ctx,
+		`SELECT index_name, non_unique, column_name, seq_in_index
+		 FROM information_schema.statistics
+		 WHERE table_schema = ? AND table_name = ?
+		 ORDER BY index_name, seq_in_index`, schema, table)
+	if err == nil {
+		byName := map[string]*Index{}
+		var order []string
+		for idxRows.Next() {
+			var name, col string
+			var nonUnique, seq int
+			if idxRows.Scan(&name, &nonUnique, &col, &seq) != nil {
+				continue
+			}
+			idx := byName[name]
+			if idx == nil {
+				idx = &Index{Name: name, Unique: nonUnique == 0, Primary: name == "PRIMARY"}
+				byName[name] = idx
+				order = append(order, name)
+			}
+			idx.Columns = append(idx.Columns, col)
+		}
+		idxRows.Close()
+		for _, name := range order {
+			meta.Indexes = append(meta.Indexes, *byName[name])
+		}
+	}
+
+	fkRows, err := c.db.QueryContext(ctx,
+		`SELECT k.constraint_name, k.column_name, k.referenced_table_schema,
+		        k.referenced_table_name, k.referenced_column_name,
+		        COALESCE(rc.update_rule,''), COALESCE(rc.delete_rule,''), k.ordinal_position
+		 FROM information_schema.key_column_usage k
+		 LEFT JOIN information_schema.referential_constraints rc
+		   ON rc.constraint_schema = k.constraint_schema
+		  AND rc.constraint_name = k.constraint_name
+		 WHERE k.table_schema = ? AND k.table_name = ?
+		   AND k.referenced_table_name IS NOT NULL
+		 ORDER BY k.constraint_name, k.ordinal_position`, schema, table)
+	if err != nil {
+		return meta, nil
+	}
+	defer fkRows.Close()
+	byName := map[string]*ForeignKey{}
+	var order []string
+	for fkRows.Next() {
+		var name, col, refSchema, refTable, refCol, onUpdate, onDelete string
+		var ord int
+		if fkRows.Scan(&name, &col, &refSchema, &refTable, &refCol, &onUpdate, &onDelete, &ord) != nil {
+			continue
+		}
+		fk := byName[name]
+		if fk == nil {
+			fk = &ForeignKey{Name: name, RefSchema: refSchema, RefTable: refTable, OnUpdate: onUpdate, OnDelete: onDelete}
+			byName[name] = fk
+			order = append(order, name)
+		}
+		fk.Columns = append(fk.Columns, col)
+		fk.RefColumns = append(fk.RefColumns, refCol)
+	}
+	for _, name := range order {
+		meta.ForeignKeys = append(meta.ForeignKeys, *byName[name])
+	}
+	return meta, nil
+}
+
 func quoteMySQL(name string) string {
 	return "`" + strings.ReplaceAll(name, "`", "``") + "`"
 }

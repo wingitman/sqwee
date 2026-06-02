@@ -84,6 +84,33 @@ type Column struct {
 	Default  string
 }
 
+// Index describes a table index surfaced by drivers that expose richer table
+// metadata.
+type Index struct {
+	Name    string
+	Columns []string
+	Unique  bool
+	Primary bool
+}
+
+// ForeignKey describes a foreign-key relationship from a table to another
+// table.
+type ForeignKey struct {
+	Name       string
+	Columns    []string
+	RefSchema  string
+	RefTable   string
+	RefColumns []string
+	OnUpdate   string
+	OnDelete   string
+}
+
+// TableMetadata bundles optional relationship/index metadata for a table.
+type TableMetadata struct {
+	Indexes     []Index
+	ForeignKeys []ForeignKey
+}
+
 // QueryResult is the outcome of a row-returning query (typically SELECT).
 type QueryResult struct {
 	Columns  []string
@@ -162,4 +189,10 @@ type Explainer interface {
 // procedure with positional arguments.
 type ProcedureRunner interface {
 	CallProcedure(ctx context.Context, obj DBObject, args []string) (QueryResult, error)
+}
+
+// TableMetadataProvider is implemented by connections that can introspect
+// indexes and foreign-key references for a table.
+type TableMetadataProvider interface {
+	TableMetadata(ctx context.Context, schema, table string) (TableMetadata, error)
 }

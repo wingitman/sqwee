@@ -1,6 +1,8 @@
 package main
 
 import (
+	"strings"
+
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 )
@@ -55,6 +57,11 @@ func (m Model) handleWheel(e tea.Mouse) (tea.Model, tea.Cmd) {
 		m.moveSchemaCursor(up)
 		return m, m.ensureColumnsCmd()
 	case TabQuery:
+		if m.editing {
+			var cmd tea.Cmd
+			m.editor, cmd = m.editor.Update(tea.MouseWheelMsg(e))
+			return m, cmd
+		}
 		switch {
 		case m.scriptFocus:
 			m.moveScriptCursor(up)
@@ -106,6 +113,16 @@ func (m Model) handleClick(e tea.Mouse) (tea.Model, tea.Cmd) {
 			}
 		}
 	case TabQuery:
+		// Click inside the built-in editor focuses it and moves the cursor to the
+		// nearest available text position.
+		if m.editorPointAt(e) {
+			m.resultsFocus = false
+			m.scriptFocus = false
+			m.editing = true
+			m.moveEditorCursorToMouse(e)
+			return m, m.editor.Focus()
+		}
+
 		// Click inside the scripts pane focuses it and selects a script.
 		if len(m.scripts) > 0 && e.X < m.cfg.UI.SidebarWidth {
 			if idx, ok := m.listIndexAt(e, len(m.scripts)); ok {
@@ -133,23 +150,12 @@ func (m Model) resultsCellAt(e tea.Mouse) (int, int, bool) {
 	if m.queryResult == nil || len(m.queryResult.Rows) == 0 {
 		return 0, 0, false
 	}
-	// X within the left scripts pane is not the grid.
-	xBase := 0
-	if len(m.scripts) > 0 {
-		xBase = m.cfg.UI.SidebarWidth
-	}
+	xBase := m.queryMainX()
 	if e.X < xBase {
 		return 0, 0, false
 	}
 
-	// Vertical: editor box occupies editorH+2 rows starting at rowContentTop.
-	contentH := m.contentHeight()
-	editorH := contentH * m.cfg.UI.ResultsSplit / 100
-	if editorH < 4 {
-		editorH = 4
-	}
-	// Results panel top = content top + editor box height (editorH + 2 borders).
-	resultsTop := rowContentTop + editorH + 2
+	resultsTop := m.queryResultsTop()
 	// Inside the results box: border(1) + title(1) + header(1) + separator(1)
 	// before the first data row.
 	firstDataRow := resultsTop + 4
@@ -165,7 +171,7 @@ func (m Model) resultsCellAt(e tea.Mouse) (int, int, bool) {
 	// Horizontal: map x to a column using the cached widths. Columns are
 	// separated by " │ " (3 cols). The panel adds a 1-col left border + nothing
 	// else before the first cell (lipgloss border).
-	x := e.X - xBase - 1 // account for the panel's left border
+	x := e.X - xBase - 1 + m.results.XOffset() // account for border and horizontal scroll
 	col := 0
 	acc := 0
 	for i, w := range m.colWidths {
@@ -181,6 +187,72 @@ func (m Model) resultsCellAt(e tea.Mouse) (int, int, bool) {
 		return row, len(m.colWidths) - 1, true
 	}
 	return 0, 0, false
+}
+
+func (m Model) queryMainX() int {
+	if len(m.scripts) == 0 {
+		return 0
+	}
+	// The scripts panel width includes its left/right border around the
+	// configured content width.
+	return m.cfg.UI.SidebarWidth + 2
+}
+
+func (m Model) queryEditorHeight() int {
+	contentH := m.contentHeight()
+	editorH := contentH * m.cfg.UI.ResultsSplit / 100
+	if editorH < 4 {
+		editorH = 4
+	}
+	return editorH
+}
+
+func (m Model) queryResultsTop() int {
+	// Query editor panel content is title + editor view, then a bordered frame.
+	return rowContentTop + m.queryEditorHeight() + 3
+}
+
+func (m Model) editorPointAt(e tea.Mouse) bool {
+	xBase := m.queryMainX()
+	if e.X < xBase || e.X >= m.width {
+		return false
+	}
+	if e.Y < rowContentTop+2 {
+		return false
+	}
+	return e.Y < rowContentTop+2+m.queryEditorHeight()
+}
+
+func (m *Model) moveEditorCursorToMouse(e tea.Mouse) {
+	row := e.Y - (rowContentTop + 2) + m.editor.ScrollYOffset()
+	lines := strings.Split(m.editor.Value(), "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	if row < 0 {
+		row = 0
+	}
+	if row >= len(lines) {
+		row = len(lines) - 1
+	}
+	for m.editor.Line() < row {
+		m.editor.CursorDown()
+	}
+	for m.editor.Line() > row {
+		m.editor.CursorUp()
+	}
+	lineNumberWidth := 0
+	if m.editor.ShowLineNumbers {
+		lineNumberWidth = 4
+	}
+	col := e.X - m.queryMainX() - 1 - lineNumberWidth
+	if col < 0 {
+		col = 0
+	}
+	if col > len([]rune(lines[row])) {
+		col = len([]rune(lines[row]))
+	}
+	m.editor.SetCursorColumn(col)
 }
 
 // tabAtColumn returns the tab whose label occupies column x in the tab bar.

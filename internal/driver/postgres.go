@@ -234,6 +234,98 @@ func (c *postgresConn) Definition(ctx context.Context, obj DBObject) (string, er
 	}
 }
 
+func (c *postgresConn) TableMetadata(ctx context.Context, schema, table string) (TableMetadata, error) {
+	var meta TableMetadata
+	idxRows, err := c.db.QueryContext(ctx,
+		`SELECT i.relname, ix.indisunique, ix.indisprimary, a.attname
+		 FROM pg_class t
+		 JOIN pg_namespace n ON n.oid = t.relnamespace
+		 JOIN pg_index ix ON ix.indrelid = t.oid
+		 JOIN pg_class i ON i.oid = ix.indexrelid
+		 JOIN unnest(ix.indkey) WITH ORDINALITY AS k(attnum, ord) ON true
+		 JOIN pg_attribute a ON a.attrelid = t.oid AND a.attnum = k.attnum
+		 WHERE n.nspname = $1 AND t.relname = $2
+		 ORDER BY i.relname, k.ord`, schema, table)
+	if err == nil {
+		byName := map[string]*Index{}
+		var order []string
+		for idxRows.Next() {
+			var name, col string
+			var unique, primary bool
+			if idxRows.Scan(&name, &unique, &primary, &col) != nil {
+				continue
+			}
+			idx := byName[name]
+			if idx == nil {
+				idx = &Index{Name: name, Unique: unique, Primary: primary}
+				byName[name] = idx
+				order = append(order, name)
+			}
+			idx.Columns = append(idx.Columns, col)
+		}
+		idxRows.Close()
+		for _, name := range order {
+			meta.Indexes = append(meta.Indexes, *byName[name])
+		}
+	}
+
+	fkRows, err := c.db.QueryContext(ctx,
+		`SELECT con.conname, nsf.nspname, rf.relname, af.attname, ar.attname,
+		        con.confupdtype::text, con.confdeltype::text, k.ord
+		 FROM pg_constraint con
+		 JOIN pg_class r ON r.oid = con.conrelid
+		 JOIN pg_namespace ns ON ns.oid = r.relnamespace
+		 JOIN pg_class rf ON rf.oid = con.confrelid
+		 JOIN pg_namespace nsf ON nsf.oid = rf.relnamespace
+		 JOIN unnest(con.conkey, con.confkey) WITH ORDINALITY AS k(attnum, refattnum, ord) ON true
+		 JOIN pg_attribute af ON af.attrelid = r.oid AND af.attnum = k.attnum
+		 JOIN pg_attribute ar ON ar.attrelid = rf.oid AND ar.attnum = k.refattnum
+		 WHERE con.contype = 'f' AND ns.nspname = $1 AND r.relname = $2
+		 ORDER BY con.conname, k.ord`, schema, table)
+	if err != nil {
+		return meta, nil
+	}
+	defer fkRows.Close()
+	byName := map[string]*ForeignKey{}
+	var order []string
+	for fkRows.Next() {
+		var name, refSchema, refTable, col, refCol, onUpdate, onDelete string
+		var ord int
+		if fkRows.Scan(&name, &refSchema, &refTable, &col, &refCol, &onUpdate, &onDelete, &ord) != nil {
+			continue
+		}
+		fk := byName[name]
+		if fk == nil {
+			fk = &ForeignKey{Name: name, RefSchema: refSchema, RefTable: refTable, OnUpdate: pgFKAction(onUpdate), OnDelete: pgFKAction(onDelete)}
+			byName[name] = fk
+			order = append(order, name)
+		}
+		fk.Columns = append(fk.Columns, col)
+		fk.RefColumns = append(fk.RefColumns, refCol)
+	}
+	for _, name := range order {
+		meta.ForeignKeys = append(meta.ForeignKeys, *byName[name])
+	}
+	return meta, nil
+}
+
+func pgFKAction(code string) string {
+	switch code {
+	case "a":
+		return "NO ACTION"
+	case "r":
+		return "RESTRICT"
+	case "c":
+		return "CASCADE"
+	case "n":
+		return "SET NULL"
+	case "d":
+		return "SET DEFAULT"
+	default:
+		return code
+	}
+}
+
 // Explain implements the optional Explainer capability.
 func (c *postgresConn) Explain(ctx context.Context, query string) (string, error) {
 	res, err := c.Query(ctx, "EXPLAIN "+query)

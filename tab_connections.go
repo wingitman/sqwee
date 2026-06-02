@@ -1,6 +1,7 @@
 package main
 
 import (
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -176,7 +177,7 @@ func (m Model) handleModalConfirm(msg modalConfirmMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.statusMsg = successStyle.Render("Exported to " + path)
-		return m, nil
+		return m, openFileExplorerCmd(m.cfg, filepath.Dir(path))
 	}
 	return m, nil
 }

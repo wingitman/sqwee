@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // ── Key handling ──────────────────────────────────────────────────────────────
@@ -82,7 +83,7 @@ func (m Model) handleQueryKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, runQueryCmd(m.conn, sql, m.activeDriver())
 
 	case keyMatches(msg, m.keys.OpenEditor):
-		return m, openEditorCmd(m.editor.Value(), ".sql")
+		return m, openEditorCmd(m.cfg, m.editor.Value(), ".sql")
 
 	case keyMatches(msg, m.keys.Refresh):
 		m.scripts = discoverSQLScripts(m.cfg)
@@ -203,8 +204,12 @@ func (m Model) viewQuery() string {
 	} else {
 		editorTitle += dimStyle.Render("  (" + m.cfg.Keys.Enter + " to edit · " + m.cfg.Keys.RunQuery + " to run)")
 	}
+	editorView := m.editor.View()
+	if !m.editing {
+		editorView = highlightSQLView(editorView)
+	}
 	editorBox := editorStyle.Width(mainW).Render(
-		editorTitle + "\n" + m.editor.View(),
+		editorTitle + "\n" + editorView,
 	)
 
 	resultsTitle := panelTitleStyle.Render("Results")
@@ -263,7 +268,7 @@ func (m Model) resultsBody() string {
 	case m.execMsg != "":
 		return m.execMsg
 	case m.queryResult != nil:
-		return m.results.View()
+		return m.resultsHeaderView() + "\n" + m.results.View()
 	default:
 		return itemDimStyle.Render("Run a query to see results here.")
 	}
@@ -309,22 +314,6 @@ func (m *Model) renderResults() {
 	m.colWidths = widths
 
 	var b strings.Builder
-
-	// Header.
-	var hdr []string
-	for i, c := range res.Columns {
-		hdr = append(hdr, tableHeaderStyle.Render(padTrunc(c, widths[i])))
-	}
-	b.WriteString(strings.Join(hdr, tableDividerStyle.Render(" │ ")))
-	b.WriteString("\n")
-
-	// Separator.
-	var sep []string
-	for _, w := range widths {
-		sep = append(sep, strings.Repeat("─", w))
-	}
-	b.WriteString(tableDividerStyle.Render(strings.Join(sep, "─┼─")))
-	b.WriteString("\n")
 
 	// Rows. When the results grid is focused, highlight the current selection
 	// (and the cursor cell within it).
@@ -376,21 +365,70 @@ func (m *Model) renderResults() {
 	m.ensureCellVisible()
 }
 
-// ensureCellVisible scrolls the results viewport so the cursor row stays in
-// view. The grid has 2 header rows (header + separator) before the data rows.
+func (m Model) resultsHeaderView() string {
+	if m.queryResult == nil || len(m.queryResult.Columns) == 0 || len(m.colWidths) == 0 {
+		return ""
+	}
+	header, sep := m.resultsHeaderLines()
+	x := m.results.XOffset()
+	w := m.results.Width()
+	if w <= 0 {
+		w = m.width - 4
+	}
+	return ansi.Cut(header, x, x+w) + "\n" + ansi.Cut(sep, x, x+w)
+}
+
+func (m Model) resultsHeaderLines() (string, string) {
+	res := *m.queryResult
+	var hdr []string
+	for i, c := range res.Columns {
+		hdr = append(hdr, tableHeaderStyle.Render(padTrunc(c, m.colWidths[i])))
+	}
+	var sep []string
+	for _, w := range m.colWidths {
+		sep = append(sep, strings.Repeat("─", w))
+	}
+	return strings.Join(hdr, tableDividerStyle.Render(" │ ")), tableDividerStyle.Render(strings.Join(sep, "─┼─"))
+}
+
+// ensureCellVisible scrolls the results viewport so the cursor cell stays in
+// view in both axes. Header rows are rendered outside the viewport, so the
+// vertical target is the data row itself.
 func (m *Model) ensureCellVisible() {
-	const headerRows = 2
-	target := m.cellRow + headerRows
+	target := m.cellRow
 	top := m.results.YOffset()
 	h := m.results.Height()
-	if h <= 0 {
+	if h > 0 {
+		if target < top {
+			m.results.SetYOffset(target)
+		} else if target >= top+h {
+			m.results.SetYOffset(target - h + 1)
+		}
+	}
+
+	if len(m.colWidths) == 0 || m.cellCol < 0 || m.cellCol >= len(m.colWidths) {
 		return
 	}
-	if target < top {
-		m.results.SetYOffset(target)
-	} else if target >= top+h {
-		m.results.SetYOffset(target - h + 1)
+	start := m.columnStart(m.cellCol)
+	end := start + m.colWidths[m.cellCol]
+	left := m.results.XOffset()
+	w := m.results.Width()
+	if w <= 0 {
+		return
 	}
+	if start < left {
+		m.results.SetXOffset(start)
+	} else if end > left+w {
+		m.results.SetXOffset(end - w)
+	}
+}
+
+func (m Model) columnStart(col int) int {
+	start := 0
+	for i := 0; i < col && i < len(m.colWidths); i++ {
+		start += m.colWidths[i] + 3
+	}
+	return start
 }
 
 // displayLen returns a rune count for width calculations.

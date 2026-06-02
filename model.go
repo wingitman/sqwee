@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
 	"charm.land/bubbles/v2/textarea"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
@@ -56,6 +57,7 @@ type Model struct {
 	schemaCursor  int // index into the *filtered* object list
 	schemaLoading bool
 	colCache      map[string][]driver.Column
+	metaCache     map[string]driver.TableMetadata
 	filtering     bool   // schema filter input is active
 	filter        string // current schema filter text
 
@@ -117,16 +119,19 @@ func NewModel() (Model, error) {
 	ed := textarea.New()
 	ed.Placeholder = "SELECT * FROM ..."
 	ed.ShowLineNumbers = true
+	ed.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("alt+backspace", "ctrl+w", "ctrl+backspace"), key.WithHelp("ctrl+backspace", "delete word backward"))
 
 	m := Model{
-		cfg:      cfg,
-		keys:     NewKeyMap(cfg),
-		data:     data,
-		tab:      TabConnections,
-		editor:   ed,
-		results:  viewport.New(),
-		colCache: map[string][]driver.Column{},
+		cfg:       cfg,
+		keys:      NewKeyMap(cfg),
+		data:      data,
+		tab:       TabConnections,
+		editor:    ed,
+		results:   viewport.New(),
+		colCache:  map[string][]driver.Column{},
+		metaCache: map[string]driver.TableMetadata{},
 	}
+	m.results.SoftWrap = false
 	m.rebuildConnections()
 	m.scripts = discoverSQLScripts(cfg)
 	return m, nil
@@ -191,6 +196,10 @@ type definitionLoadedMsg struct{ ddl string }
 type columnsLoadedMsg struct {
 	key  string
 	cols []driver.Column
+}
+type tableMetadataLoadedMsg struct {
+	key  string
+	meta driver.TableMetadata
 }
 type configReloadedMsg struct{ cfg Config }
 
@@ -308,6 +317,22 @@ func loadColumnsCmd(conn driver.Conn, obj driver.DBObject) tea.Cmd {
 	}
 }
 
+func loadTableMetadataCmd(conn driver.Conn, obj driver.DBObject) tea.Cmd {
+	return func() tea.Msg {
+		provider, ok := conn.(driver.TableMetadataProvider)
+		if !ok {
+			return tableMetadataLoadedMsg{key: obj.Qualified()}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		meta, err := provider.TableMetadata(ctx, obj.Schema, obj.Name)
+		if err != nil {
+			return tableMetadataLoadedMsg{key: obj.Qualified()}
+		}
+		return tableMetadataLoadedMsg{key: obj.Qualified(), meta: meta}
+	}
+}
+
 func loadDefinitionCmd(conn driver.Conn, obj driver.DBObject) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
@@ -328,6 +353,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.applyLayout()
+		m.renderResults()
 		return m, nil
 
 	case connectedMsg:
@@ -357,10 +383,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.filter = ""
 		m.filtering = false
 		m.colCache = map[string][]driver.Column{}
+		m.metaCache = map[string]driver.TableMetadata{}
 		return m, m.ensureColumnsCmd()
 
 	case columnsLoadedMsg:
 		m.colCache[msg.key] = msg.cols
+		return m, nil
+
+	case tableMetadataLoadedMsg:
+		m.metaCache[msg.key] = msg.meta
 		return m, nil
 
 	case schemaErrMsg:
@@ -425,6 +456,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.statusMsg = errorStyle.Render("Copy failed: " + msg.err.Error())
 		} else {
 			m.statusMsg = successStyle.Render(msg.note)
+		}
+		return m, nil
+
+	case explorerOpenedMsg:
+		if msg.err != "" {
+			m.statusMsg = errorStyle.Render("Open export folder failed: " + msg.err)
 		}
 		return m, nil
 
@@ -501,6 +538,9 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editing = false
 			m.editor.Blur()
 			return m, nil
+		case "tab":
+			m.editor.InsertString("  ")
+			return m, nil
 		case "ctrl+s":
 			if m.conn != nil {
 				if sql := strings.TrimSpace(m.editor.Value()); sql != "" {
@@ -514,6 +554,13 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.editor, cmd = m.editor.Update(msg)
 			return m, cmd
 		}
+	}
+
+	// Active schema filtering owns printable keys before global shortcuts. This
+	// lets filter text include keys that are otherwise mapped globally, such as
+	// the default "o" for opening config.
+	if m.tab == TabSchema && m.filtering {
+		return m.handleSchemaKey(msg)
 	}
 
 	// On the Query tab, Tab / Shift+Tab move focus between the editor and the
@@ -541,7 +588,7 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case keyMatches(msg, m.keys.OpenConfig):
-		return m, openConfigCmd()
+		return m, openConfigCmd(m.cfg)
 	}
 
 	// Per-tab handling.
@@ -580,7 +627,8 @@ func (m *Model) applyLayout() {
 	m.editor.SetWidth(mainW - 2)
 	m.editor.SetHeight(editorH)
 	m.results.SetWidth(mainW - 2)
-	m.results.SetHeight(resultsH)
+	// The results panel renders a fixed header + separator outside the viewport.
+	m.results.SetHeight(max(1, resultsH-2))
 }
 
 const (
@@ -668,38 +716,51 @@ func (m Model) renderHintBar() string {
 	}
 
 	var hints []string
-	hints = append(hints,
-		pair(m.keys.TabNext, "tab"),
-		pair(m.keys.Up, "up"),
-		pair(m.keys.Down, "down"),
-	)
 	switch m.tab {
 	case TabConnections:
 		hints = append(hints,
+			pair(m.keys.Up, "up"),
+			pair(m.keys.Down, "down"),
 			pair(m.keys.Connect, "connect"),
 			pair(m.keys.InitDB, "init db"),
 			pair(m.keys.NewItem, "new"),
 			pair(m.keys.EditItem, "edit"),
 			pair(m.keys.DeleteItem, "delete"),
 			pair(m.keys.CopyItem, "copy cfg"),
+			pair(m.keys.TabNext, "schema"),
 		)
 	case TabSchema:
 		if m.filtering {
-			line := hintKeyStyle.Render("type") + hintStyle.Render(" to filter   ") +
+			line := hintLabelStyle.Render("Hints ") + hintStyle.Render("│ ") +
+				hintKeyStyle.Render("type") + hintStyle.Render(" to filter   ") +
 				hintKeyStyle.Render("enter") + hintStyle.Render(" apply   ") +
 				hintKeyStyle.Render("esc") + hintStyle.Render(" clear")
 			divider := hintDividerStyle.Render(strings.Repeat("─", m.width))
 			return divider + "\n" + line
 		}
 		hints = append(hints,
+			pair(m.keys.Up, "up"),
+			pair(m.keys.Down, "down"),
 			hintKeyStyle.Render("/")+hintStyle.Render(":filter"),
 			pair(m.keys.Enter, "open"),
 			pair(m.keys.Refresh, "refresh"),
 			pair(m.keys.NewItem, "new object"),
+			pair(m.keys.TabNext, "query"),
 		)
 	case TabQuery:
-		if m.resultsFocus {
+		if m.editing {
 			hints = append(hints,
+				hintKeyStyle.Render("tab")+hintStyle.Render(":indent"),
+				hintKeyStyle.Render("ctrl+backspace")+hintStyle.Render(":delete word"),
+				hintKeyStyle.Render("ctrl+s")+hintStyle.Render(":run"),
+				hintKeyStyle.Render("esc")+hintStyle.Render(":done"),
+			)
+		} else if m.resultsFocus {
+			hints = append(hints,
+				pair(m.keys.Up, "row up"),
+				pair(m.keys.Down, "row down"),
+				pair(m.keys.Left, "col left"),
+				pair(m.keys.Right, "col right"),
 				pair(m.keys.SelectMode, "select:"+m.selMode.String()),
 				pair(m.keys.CopyItem, "copy csv"),
 				pair(m.keys.CopyHeaders, "copy+hdr"),
@@ -707,13 +768,22 @@ func (m Model) renderHintBar() string {
 				pair(m.keys.TabPrev, "editor"),
 			)
 		} else {
+			if m.scriptFocus {
+				hints = append(hints,
+					pair(m.keys.Up, "script up"),
+					pair(m.keys.Down, "script down"),
+					pair(m.keys.Enter, "load"),
+					pair(m.keys.Right, "editor"),
+				)
+			} else {
+				hints = append(hints,
+					pair(m.keys.Enter, "edit"),
+					pair(m.keys.RunQuery, "run"),
+				)
+			}
 			if len(m.scripts) > 0 {
 				hints = append(hints, pair(m.keys.Left, "scripts"))
 			}
-			hints = append(hints,
-				pair(m.keys.Enter, "edit"),
-				pair(m.keys.RunQuery, "run"),
-			)
 			if m.queryResult != nil && len(m.queryResult.Rows) > 0 {
 				hints = append(hints, pair(m.keys.TabNext, "results"))
 			}
@@ -723,9 +793,11 @@ func (m Model) renderHintBar() string {
 			)
 		}
 	}
-	hints = append(hints, pair(m.keys.Quit, "quit"))
+	if !m.editing && !m.filtering {
+		hints = append(hints, pair(m.keys.OpenConfig, "config"), pair(m.keys.Quit, "quit"))
+	}
 
-	line := strings.Join(hints, hintStyle.Render("  "))
+	line := hintLabelStyle.Render("Hints ") + hintStyle.Render("│ ") + strings.Join(hints, hintStyle.Render("  "))
 	if m.statusMsg != "" {
 		line = m.statusMsg + hintStyle.Render("   ") + line
 	}

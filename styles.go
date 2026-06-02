@@ -55,12 +55,15 @@ var (
 				Foreground(colWhite).
 				Background(colPurple).
 				Bold(true)
-	itemStyle    = lipgloss.NewStyle().Foreground(colWhite)
-	itemDimStyle = lipgloss.NewStyle().Foreground(colGray)
+	itemStyle        = lipgloss.NewStyle().Foreground(colWhite)
+	itemDimStyle     = lipgloss.NewStyle().Foreground(colGray)
+	schemaGroupStyle = lipgloss.NewStyle().Foreground(colOrange).Bold(true)
 
 	labelStyle        = lipgloss.NewStyle().Foreground(colGray)
 	labelFocusedStyle = lipgloss.NewStyle().Foreground(colTeal).Bold(true)
 	valueStyle        = lipgloss.NewStyle().Foreground(colWhite)
+	sqlKeywordStyle   = lipgloss.NewStyle().Foreground(colPurple).Bold(true)
+	sqlCommentStyle   = lipgloss.NewStyle().Foreground(colGray).Italic(true)
 )
 
 // ─── Status / feedback ──────────────────────────────────────────────────────
@@ -93,6 +96,7 @@ var (
 	hintDividerStyle = lipgloss.NewStyle().Foreground(colBorder)
 	hintStyle        = lipgloss.NewStyle().Foreground(colGray)
 	hintKeyStyle     = lipgloss.NewStyle().Foreground(colTeal).Bold(true)
+	hintLabelStyle   = lipgloss.NewStyle().Foreground(colOrange).Bold(true)
 )
 
 // ─── Modal ──────────────────────────────────────────────────────────────────

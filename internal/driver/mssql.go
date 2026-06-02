@@ -250,6 +250,86 @@ func (c *mssqlConn) Definition(ctx context.Context, obj DBObject) (string, error
 	}
 }
 
+func (c *mssqlConn) TableMetadata(ctx context.Context, schema, table string) (TableMetadata, error) {
+	db, sch := splitDBSchema(schema)
+	prefix := ""
+	if db != "" {
+		prefix = quoteMSSQLIdent(db) + "."
+	}
+	var meta TableMetadata
+	idxRows, err := c.db.QueryContext(ctx,
+		`SELECT i.name, i.is_unique, i.is_primary_key, c.name, ic.key_ordinal
+		 FROM `+prefix+`sys.indexes i
+		 JOIN `+prefix+`sys.index_columns ic ON ic.object_id = i.object_id AND ic.index_id = i.index_id
+		 JOIN `+prefix+`sys.columns c ON c.object_id = ic.object_id AND c.column_id = ic.column_id
+		 JOIN `+prefix+`sys.tables t ON t.object_id = i.object_id
+		 JOIN `+prefix+`sys.schemas s ON s.schema_id = t.schema_id
+		 WHERE s.name = @p1 AND t.name = @p2 AND i.name IS NOT NULL AND ic.key_ordinal > 0
+		 ORDER BY i.name, ic.key_ordinal`, sch, table)
+	if err == nil {
+		byName := map[string]*Index{}
+		var order []string
+		for idxRows.Next() {
+			var name, col string
+			var unique, primary bool
+			var ord int
+			if idxRows.Scan(&name, &unique, &primary, &col, &ord) != nil {
+				continue
+			}
+			idx := byName[name]
+			if idx == nil {
+				idx = &Index{Name: name, Unique: unique, Primary: primary}
+				byName[name] = idx
+				order = append(order, name)
+			}
+			idx.Columns = append(idx.Columns, col)
+		}
+		idxRows.Close()
+		for _, name := range order {
+			meta.Indexes = append(meta.Indexes, *byName[name])
+		}
+	}
+
+	fkRows, err := c.db.QueryContext(ctx,
+		`SELECT fk.name, pc.name, rs.name, rt.name, rc.name,
+		        fk.update_referential_action_desc, fk.delete_referential_action_desc, fkc.constraint_column_id
+		 FROM `+prefix+`sys.foreign_keys fk
+		 JOIN `+prefix+`sys.foreign_key_columns fkc ON fkc.constraint_object_id = fk.object_id
+		 JOIN `+prefix+`sys.tables pt ON pt.object_id = fk.parent_object_id
+		 JOIN `+prefix+`sys.schemas ps ON ps.schema_id = pt.schema_id
+		 JOIN `+prefix+`sys.columns pc ON pc.object_id = pt.object_id AND pc.column_id = fkc.parent_column_id
+		 JOIN `+prefix+`sys.tables rt ON rt.object_id = fk.referenced_object_id
+		 JOIN `+prefix+`sys.schemas rs ON rs.schema_id = rt.schema_id
+		 JOIN `+prefix+`sys.columns rc ON rc.object_id = rt.object_id AND rc.column_id = fkc.referenced_column_id
+		 WHERE ps.name = @p1 AND pt.name = @p2
+		 ORDER BY fk.name, fkc.constraint_column_id`, sch, table)
+	if err != nil {
+		return meta, nil
+	}
+	defer fkRows.Close()
+	byName := map[string]*ForeignKey{}
+	var order []string
+	for fkRows.Next() {
+		var name, col, refSchema, refTable, refCol, onUpdate, onDelete string
+		var ord int
+		if fkRows.Scan(&name, &col, &refSchema, &refTable, &refCol, &onUpdate, &onDelete, &ord) != nil {
+			continue
+		}
+		fk := byName[name]
+		if fk == nil {
+			fk = &ForeignKey{Name: name, RefSchema: refSchema, RefTable: refTable, OnUpdate: onUpdate, OnDelete: onDelete}
+			byName[name] = fk
+			order = append(order, name)
+		}
+		fk.Columns = append(fk.Columns, col)
+		fk.RefColumns = append(fk.RefColumns, refCol)
+	}
+	for _, name := range order {
+		meta.ForeignKeys = append(meta.ForeignKeys, *byName[name])
+	}
+	return meta, nil
+}
+
 // quoteMSSQLIdent wraps an identifier in [brackets], escaping embedded ].
 func quoteMSSQLIdent(name string) string {
 	return "[" + strings.ReplaceAll(name, "]", "]]") + "]"

@@ -204,6 +204,8 @@ quit         = "q"
 sidebar_width = 32   # width of the left list in columns
 results_split = 50   # % of the Query tab height for the editor
 theme         = "dark"
+editor        = ""   # optional editor command; empty uses $VISUAL, $EDITOR, then OS default
+file_explorer = ""   # optional folder opener; empty uses OS default
 
 [discovery]
 scan_env    = true   # scan DATABASE_URL / PG* / MYSQL_* env vars

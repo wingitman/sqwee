@@ -64,6 +64,8 @@ type ConfigUI struct {
 	SidebarWidth int    `toml:"sidebar_width"`
 	ResultsSplit int    `toml:"results_split"` // % of the query tab height for the editor
 	Theme        string `toml:"theme"`
+	Editor       string `toml:"editor"`        // optional command overriding $VISUAL/$EDITOR
+	FileExplorer string `toml:"file_explorer"` // optional command for opening folders after export
 }
 
 // ConfigDiscovery controls automatic connection discovery on startup.
@@ -115,6 +117,8 @@ func defaultConfig() Config {
 			SidebarWidth: 32,
 			ResultsSplit: 50,
 			Theme:        "dark",
+			Editor:       "",
+			FileExplorer: "",
 		},
 		Discovery: ConfigDiscovery{
 			ScanEnv:    true,
@@ -189,6 +193,11 @@ func configNeedsMigration(path string) bool {
 		}
 	}
 	for _, key := range tomlKeys(reflect.TypeOf(ConfigDiscovery{}), false) {
+		if !strings.Contains(s, key+" =") {
+			return true
+		}
+	}
+	for _, key := range tomlKeys(reflect.TypeOf(ConfigUI{}), false) {
 		if !strings.Contains(s, key+" =") {
 			return true
 		}
@@ -300,6 +309,8 @@ func buildConfigTOML(cfg Config) string {
 		"sidebar_width = " + itoa(ui.SidebarWidth) + "   # width of the left list in columns\n" +
 		"results_split = " + itoa(ui.ResultsSplit) + "   # % of the query tab height for the editor\n" +
 		"theme         = " + q(ui.Theme) + "     # colour theme (currently only \"dark\" is supported)\n" +
+		"editor        = " + q(ui.Editor) + "        # optional editor command; empty uses $VISUAL, $EDITOR, then OS default\n" +
+		"file_explorer = " + q(ui.FileExplorer) + "        # optional folder opener; empty uses OS default\n" +
 		"\n" +
 		"[discovery]\n" +
 		"scan_env    = " + boolStr(d.ScanEnv) + "   # scan DATABASE_URL / PG* / MYSQL_* env vars\n" +

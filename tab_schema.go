@@ -106,7 +106,7 @@ func (m Model) handleSchemaKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	case keyMatches(msg, m.keys.NewItem):
 		mod := NewModal(ModalNewObject, "New Object", []ModalField{
-			{Label: "Kind", Kind: FieldSelect, Options: []string{"table", "view", "function", "procedure"}},
+			{Label: "Kind", Kind: FieldSelect, Options: []string{"table", "view", "function", "procedure", "index", "foreign key"}},
 			{Label: "Name", Placeholder: "my_table"},
 		}, m.modalWidth(), m.keys)
 		m.modal = &mod
@@ -136,10 +136,16 @@ func (m Model) ensureColumnsCmd() tea.Cmd {
 	if obj.Kind != driver.KindTable && obj.Kind != driver.KindView {
 		return nil
 	}
-	if _, ok := m.colCache[obj.Qualified()]; ok {
-		return nil
+	var cmds []tea.Cmd
+	if _, ok := m.colCache[obj.Qualified()]; !ok {
+		cmds = append(cmds, loadColumnsCmd(m.conn, obj))
 	}
-	return loadColumnsCmd(m.conn, obj)
+	if obj.Kind == driver.KindTable {
+		if _, ok := m.metaCache[obj.Qualified()]; !ok {
+			cmds = append(cmds, loadTableMetadataCmd(m.conn, obj))
+		}
+	}
+	return tea.Batch(cmds...)
 }
 
 // previewSelect builds a "first N rows" SELECT appropriate for the dialect
@@ -162,6 +168,10 @@ func scaffoldObject(kind, name string) string {
 		return "-- Function definition (dialect-specific)\nCREATE FUNCTION " + name + "() RETURNS void AS $$\nBEGIN\n  -- ...\nEND;\n$$ LANGUAGE plpgsql;"
 	case "procedure":
 		return "-- Procedure definition (dialect-specific)\nCREATE PROCEDURE " + name + "()\nBEGIN\n  -- ...\nEND;"
+	case "index":
+		return "-- Replace table_name/column_name, then run.\nCREATE INDEX " + name + " ON table_name (column_name);"
+	case "foreign key":
+		return "-- Replace table/column names, then run.\nALTER TABLE table_name\n  ADD CONSTRAINT " + name + "\n  FOREIGN KEY (column_name)\n  REFERENCES ref_table(ref_column);"
 	default:
 		return "-- " + kind + " " + name
 	}
@@ -260,21 +270,32 @@ func (m Model) schemaListLinesAndMap(objs []driver.DBObject, visible int) ([]str
 	}
 	var all []line
 	selLine := 0
-	lastSchema := ""
-	for i, obj := range objs {
-		if obj.Schema != lastSchema && obj.Schema != "" {
-			all = append(all, line{text: itemDimStyle.Render(obj.Schema), obj: -1})
-			lastSchema = obj.Schema
+	schemas := orderedSchemas(objs)
+	kinds := []driver.ObjectKind{driver.KindTable, driver.KindView, driver.KindFunction, driver.KindProcedure}
+	for _, schema := range schemas {
+		if schema != "" {
+			all = append(all, line{text: itemDimStyle.Render(schema), obj: -1})
 		}
-		badge := lipgloss.NewStyle().Foreground(objectKindColor(string(obj.Kind))).Render(kindBadge(obj.Kind))
-		var text string
-		if i == m.schemaCursor {
-			text = selectedItemStyle.Render("› "+obj.Name) + " " + badge
-			selLine = len(all)
-		} else {
-			text = itemStyle.Render("  " + badge + " " + obj.Name)
+		for _, kind := range kinds {
+			startLen := len(all)
+			for i, obj := range objs {
+				if obj.Schema != schema || obj.Kind != kind {
+					continue
+				}
+				if len(all) == startLen {
+					all = append(all, line{text: schemaGroupStyle.Render("  " + kindPlural(kind)), obj: -1})
+				}
+				badge := lipgloss.NewStyle().Foreground(objectKindColor(string(obj.Kind))).Render(kindBadge(obj.Kind))
+				var text string
+				if i == m.schemaCursor {
+					text = selectedItemStyle.Render("› "+obj.Name) + " " + badge
+					selLine = len(all)
+				} else {
+					text = itemStyle.Render("  " + badge + " " + obj.Name)
+				}
+				all = append(all, line{text: text, obj: i})
+			}
 		}
-		all = append(all, line{text: text, obj: i})
 	}
 
 	emit := func(ls []line) ([]string, []int) {
@@ -351,6 +372,36 @@ func (m Model) objectDetailPanel(w, h int) string {
 			b.WriteString(valueStyle.Render(c.Name) + " " +
 				lipgloss.NewStyle().Foreground(colTeal).Render(c.Type) + key + null + "\n")
 		}
+		if obj.Kind == driver.KindTable {
+			meta := m.metaCache[obj.Qualified()]
+			b.WriteString("\n")
+			b.WriteString(panelTitleStyle.Render("Indexes") + "\n")
+			if len(meta.Indexes) == 0 {
+				b.WriteString(itemDimStyle.Render("No indexes found or metadata unavailable.") + "\n")
+			}
+			for _, idx := range meta.Indexes {
+				attrs := ""
+				if idx.Primary {
+					attrs = " " + lipgloss.NewStyle().Foreground(colOrange).Render("[PK]")
+				} else if idx.Unique {
+					attrs = " " + lipgloss.NewStyle().Foreground(colOrange).Render("[UNIQUE]")
+				}
+				b.WriteString(valueStyle.Render(idx.Name) + attrs + dimStyle.Render(" ("+strings.Join(idx.Columns, ", ")+")") + "\n")
+			}
+
+			b.WriteString("\n")
+			b.WriteString(panelTitleStyle.Render("Foreign Keys") + "\n")
+			if len(meta.ForeignKeys) == 0 {
+				b.WriteString(itemDimStyle.Render("No foreign keys found or metadata unavailable.") + "\n")
+			}
+			for _, fk := range meta.ForeignKeys {
+				ref := fk.RefTable
+				if fk.RefSchema != "" {
+					ref = fk.RefSchema + "." + ref
+				}
+				b.WriteString(valueStyle.Render(fk.Name) + dimStyle.Render(" ("+strings.Join(fk.Columns, ", ")+") -> "+ref+"("+strings.Join(fk.RefColumns, ", ")+")") + "\n")
+			}
+		}
 	} else {
 		b.WriteString(itemDimStyle.Render("Press " + m.cfg.Keys.Enter + " to load its definition into the Query tab."))
 	}
@@ -370,5 +421,33 @@ func kindBadge(k driver.ObjectKind) string {
 		return "⚙"
 	default:
 		return "·"
+	}
+}
+
+func orderedSchemas(objs []driver.DBObject) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, obj := range objs {
+		if seen[obj.Schema] {
+			continue
+		}
+		seen[obj.Schema] = true
+		out = append(out, obj.Schema)
+	}
+	return out
+}
+
+func kindPlural(k driver.ObjectKind) string {
+	switch k {
+	case driver.KindTable:
+		return "Tables"
+	case driver.KindView:
+		return "Views"
+	case driver.KindFunction:
+		return "Functions"
+	case driver.KindProcedure:
+		return "Procedures"
+	default:
+		return "Objects"
 	}
 }

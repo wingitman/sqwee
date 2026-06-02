@@ -35,28 +35,58 @@ func TestTabAtColumn(t *testing.T) {
 
 func TestSchemaObjectRowMap(t *testing.T) {
 	m := Model{objects: []driver.DBObject{
-		{Schema: "main", Name: "a"},
-		{Schema: "main", Name: "b"},
-		{Schema: "other", Name: "c"},
+		{Schema: "main", Name: "a", Kind: driver.KindTable},
+		{Schema: "main", Name: "b", Kind: driver.KindTable},
+		{Schema: "other", Name: "c", Kind: driver.KindTable},
 	}}
 	// With ample visible height, layout is:
 	//   row 0: header "main"
-	//   row 1: a (obj 0)
-	//   row 2: b (obj 1)
-	//   row 3: header "other"
-	//   row 4: c (obj 2)
+	//   row 1: header "Tables"
+	//   row 2: a (obj 0)
+	//   row 3: b (obj 1)
+	//   row 4: header "other"
+	//   row 5: header "Tables"
+	//   row 6: c (obj 2)
 	visible := 20
-	if idx, ok := m.objectIndexAtRow(visible, 4); !ok || idx != 2 {
-		t.Errorf("objectIndexAtRow(4) = (%d,%v), want (2,true)", idx, ok)
+	if idx, ok := m.objectIndexAtRow(visible, 6); !ok || idx != 2 {
+		t.Errorf("objectIndexAtRow(6) = (%d,%v), want (2,true)", idx, ok)
 	}
-	if idx, ok := m.objectIndexAtRow(visible, 1); !ok || idx != 0 {
-		t.Errorf("objectIndexAtRow(1) = (%d,%v), want (0,true)", idx, ok)
+	if idx, ok := m.objectIndexAtRow(visible, 2); !ok || idx != 0 {
+		t.Errorf("objectIndexAtRow(2) = (%d,%v), want (0,true)", idx, ok)
 	}
 	if _, ok := m.objectIndexAtRow(visible, 0); ok {
 		t.Error("row 0 is a header, should not map to an object")
 	}
-	if _, ok := m.objectIndexAtRow(visible, 3); ok {
-		t.Error("row 3 is a header, should not map to an object")
+	if _, ok := m.objectIndexAtRow(visible, 5); ok {
+		t.Error("row 5 is a header, should not map to an object")
+	}
+}
+
+func TestSchemaFilterCapturesOpenConfigKey(t *testing.T) {
+	m := Model{tab: TabSchema, cfg: defaultConfig(), keys: NewKeyMap(defaultConfig()), filtering: true}
+	msg := tea.KeyPressMsg{Code: 'o', Text: "o"}
+	model, _ := m.handleKey(msg)
+	got := model.(Model)
+	if got.filter != "o" {
+		t.Fatalf("filter = %q, want o", got.filter)
+	}
+}
+
+func TestEnsureCellVisibleScrollsBothAxes(t *testing.T) {
+	m := Model{width: 40, resultsFocus: true, queryResult: &driver.QueryResult{
+		Columns: []string{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc", "dddddddddd"},
+		Rows:    [][]string{{"1", "2", "3", "4"}, {"5", "6", "7", "8"}, {"9", "10", "11", "12"}},
+	}}
+	m.results.SetWidth(12)
+	m.results.SetHeight(2)
+	m.cellRow = 2
+	m.cellCol = 3
+	m.renderResults()
+	if m.results.YOffset() == 0 {
+		t.Fatal("expected vertical offset to follow row cursor")
+	}
+	if m.results.XOffset() == 0 {
+		t.Fatal("expected horizontal offset to follow column cursor")
 	}
 }
 

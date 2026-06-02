@@ -127,6 +127,63 @@ func (c *sqliteConn) Definition(ctx context.Context, obj DBObject) (string, erro
 	return ddl.String + ";", nil
 }
 
+func (c *sqliteConn) TableMetadata(ctx context.Context, schema, table string) (TableMetadata, error) {
+	var meta TableMetadata
+	idxRows, err := c.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_list(%q)", table))
+	if err == nil {
+		for idxRows.Next() {
+			var seq int
+			var name, origin string
+			var unique, partial int
+			if idxRows.Scan(&seq, &name, &unique, &origin, &partial) != nil {
+				continue
+			}
+			idx := Index{Name: name, Unique: unique == 1, Primary: origin == "pk"}
+			colRows, cerr := c.db.QueryContext(ctx, fmt.Sprintf("PRAGMA index_info(%q)", name))
+			if cerr == nil {
+				for colRows.Next() {
+					var seqno, cid int
+					var col string
+					if colRows.Scan(&seqno, &cid, &col) == nil {
+						idx.Columns = append(idx.Columns, col)
+					}
+				}
+				colRows.Close()
+			}
+			meta.Indexes = append(meta.Indexes, idx)
+		}
+		idxRows.Close()
+	}
+
+	fkRows, err := c.db.QueryContext(ctx, fmt.Sprintf("PRAGMA foreign_key_list(%q)", table))
+	if err != nil {
+		return meta, nil
+	}
+	defer fkRows.Close()
+	byID := map[int]*ForeignKey{}
+	var order []int
+	for fkRows.Next() {
+		var id, seq int
+		var refTable, from, to, onUpdate, onDelete, match string
+		if fkRows.Scan(&id, &seq, &refTable, &from, &to, &onUpdate, &onDelete, &match) != nil {
+			continue
+		}
+		fk := byID[id]
+		if fk == nil {
+			name := "fk_" + table + "_" + itoaDriver(id)
+			fk = &ForeignKey{Name: name, RefSchema: schema, RefTable: refTable, OnUpdate: onUpdate, OnDelete: onDelete}
+			byID[id] = fk
+			order = append(order, id)
+		}
+		fk.Columns = append(fk.Columns, from)
+		fk.RefColumns = append(fk.RefColumns, to)
+	}
+	for _, id := range order {
+		meta.ForeignKeys = append(meta.ForeignKeys, *byID[id])
+	}
+	return meta, nil
+}
+
 // Explain implements the optional Explainer capability.
 func (c *sqliteConn) Explain(ctx context.Context, query string) (string, error) {
 	res, err := c.Query(ctx, "EXPLAIN QUERY PLAN "+query)
@@ -139,6 +196,18 @@ func (c *sqliteConn) Explain(ctx context.Context, query string) (string, error) 
 		b.WriteString("\n")
 	}
 	return b.String(), nil
+}
+
+func itoaDriver(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	s := ""
+	for n > 0 {
+		s = string(rune('0'+n%10)) + s
+		n /= 10
+	}
+	return s
 }
 
 // ─── Provisioner ────────────────────────────────────────────────────────────
