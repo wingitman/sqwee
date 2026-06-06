@@ -22,15 +22,7 @@ func (d *sqliteDriver) DefaultPort() int  { return 0 }
 func (d *sqliteDriver) Connect(ctx context.Context, info ConnInfo) (Conn, error) {
 	// SQLite is file-backed: the database is a path. Accept it from the URL,
 	// the Database field, or the Host field for flexibility.
-	path := info.Database
-	if info.URL != "" {
-		path = strings.TrimPrefix(info.URL, "sqlite://")
-		path = strings.TrimPrefix(path, "sqlite3://")
-		path = strings.TrimPrefix(path, "file://")
-	}
-	if path == "" {
-		path = info.Host
-	}
+	path := SQLitePath(info)
 	if path == "" {
 		return nil, fmt.Errorf("sqlite: no database file path provided")
 	}
@@ -44,6 +36,20 @@ func (d *sqliteDriver) Connect(ctx context.Context, info ConnInfo) (Conn, error)
 		return nil, err
 	}
 	return &sqliteConn{sqlConn: sqlConn{db: db}}, nil
+}
+
+// SQLitePath returns the file path represented by a SQLite connection.
+func SQLitePath(info ConnInfo) string {
+	path := info.Database
+	if info.URL != "" {
+		path = strings.TrimPrefix(info.URL, "sqlite://")
+		path = strings.TrimPrefix(path, "sqlite3://")
+		path = strings.TrimPrefix(path, "file://")
+	}
+	if path == "" {
+		path = info.Host
+	}
+	return path
 }
 
 type sqliteConn struct {

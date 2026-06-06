@@ -158,53 +158,36 @@ func discoverFromEnv() []driver.ConnInfo {
 	return out
 }
 
-// discoverFromDotenv reads a .env file in the working directory looking for a
+// discoverFromDotenv reads .env* files in the working directory looking for a
 // connection URL (*DATABASE_URL / *DB_URL) or a SQLite file path
 // (*DATABASE_PATH / *DB_PATH / *SQLITE* / any value ending in a sqlite ext).
 func discoverFromDotenv() []driver.ConnInfo {
+	return discoverFromEnvSources(discoverEnvSources())
+}
+
+func discoverFromEnvSources(sources []EnvSource) []driver.ConnInfo {
 	var out []driver.ConnInfo
-	f, err := os.Open(".env")
-	if err != nil {
-		return out
-	}
-	defer f.Close()
-
-	baseDir, _ := filepath.Abs(".")
-
-	sc := bufio.NewScanner(f)
-	for sc.Scan() {
-		line := strings.TrimSpace(sc.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		key, val, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		ukey := strings.ToUpper(key)
-		val = strings.Trim(strings.TrimSpace(val), `"'`)
-		if val == "" {
-			continue
-		}
-
-		switch {
-		case strings.HasSuffix(ukey, "DATABASE_URL") || strings.HasSuffix(ukey, "DB_URL"):
-			if ci, ok := parseURLConn(val, ".env:"+key); ok {
-				out = append(out, ci)
+	for _, src := range sources {
+		for key, val := range src.Values {
+			ukey := strings.ToUpper(key)
+			if val == "" {
+				continue
 			}
-		case strings.HasSuffix(ukey, "DATABASE_PATH") || strings.HasSuffix(ukey, "DB_PATH") ||
-			strings.Contains(ukey, "SQLITE") || sqliteExts[strings.ToLower(filepath.Ext(val))]:
-			path := val
-			if !filepath.IsAbs(path) {
-				path = filepath.Join(baseDir, path)
+
+			switch {
+			case strings.HasSuffix(ukey, "DATABASE_URL") || strings.HasSuffix(ukey, "DB_URL"):
+				if ci, ok := parseURLConn(val, src.Name+":"+key); ok {
+					out = append(out, ci)
+				}
+			case strings.HasSuffix(ukey, "DATABASE_PATH") || strings.HasSuffix(ukey, "DB_PATH") ||
+				strings.Contains(ukey, "SQLITE") || sqliteExts[strings.ToLower(filepath.Ext(val))]:
+				out = append(out, driver.ConnInfo{
+					Name:     filepath.Base(val),
+					Driver:   "sqlite",
+					Database: absFromWorkingDir(val),
+					Source:   src.Name + ":" + key,
+				})
 			}
-			out = append(out, driver.ConnInfo{
-				Name:     filepath.Base(val),
-				Driver:   "sqlite",
-				Database: path,
-				Source:   ".env:" + key,
-			})
 		}
 	}
 	return out
@@ -269,6 +252,12 @@ func parseURLConn(raw, source string) (driver.ConnInfo, bool) {
 	}
 	port, _ := strconv.Atoi(u.Port())
 	pw, _ := u.User.Password()
+	options := map[string]string{}
+	for k, vals := range u.Query() {
+		if len(vals) > 0 {
+			options[k] = vals[len(vals)-1]
+		}
+	}
 	name := u.Scheme
 	if u.Host != "" {
 		name = u.Scheme + " " + u.Host
@@ -282,6 +271,7 @@ func parseURLConn(raw, source string) (driver.ConnInfo, bool) {
 		User:     u.User.Username(),
 		Password: pw,
 		Database: strings.TrimPrefix(u.Path, "/"),
+		Options:  options,
 		Source:   source,
 	}, true
 }

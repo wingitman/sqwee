@@ -314,7 +314,7 @@ func buildConfigTOML(cfg Config) string {
 		"\n" +
 		"[discovery]\n" +
 		"scan_env    = " + boolStr(d.ScanEnv) + "   # scan DATABASE_URL / PG* / MYSQL_* env vars\n" +
-		"scan_dotenv = " + boolStr(d.ScanDotenv) + "   # scan .env files in the working directory\n" +
+		"scan_dotenv = " + boolStr(d.ScanDotenv) + "   # scan .env* files in the working directory\n" +
 		"scan_pgpass = " + boolStr(d.ScanPgpass) + "   # scan ~/.pgpass for Postgres connections\n" +
 		"scan_sqlite = " + boolStr(d.ScanSQLite) + "   # scan the working directory for *.sqlite / *.db files\n" +
 		"scan_sql    = " + boolStr(d.ScanSQL) + "   # import *.sql script files from the working directory\n" +

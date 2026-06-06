@@ -3,7 +3,9 @@ package driver
 import (
 	"context"
 	"database/sql"
-	"fmt"
+	"net"
+	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/go-sql-driver/mysql"
@@ -20,8 +22,11 @@ func (d *mysqlDriver) DefaultPort() int  { return 3306 }
 func (d *mysqlDriver) Connect(ctx context.Context, info ConnInfo) (Conn, error) {
 	dsn := info.URL
 	if strings.HasPrefix(dsn, "mysql://") || strings.HasPrefix(dsn, "mariadb://") {
-		// Convert a URL into the go-sql-driver DSN form.
-		dsn = ""
+		var err error
+		dsn, err = mysqlURLToDSN(dsn, info)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if dsn == "" {
 		dsn = buildMySQLDSN(info)
@@ -50,7 +55,7 @@ func buildMySQLDSN(info ConnInfo) string {
 	if port == 0 {
 		port = 3306
 	}
-	cfg.Addr = fmt.Sprintf("%s:%d", host, port)
+	cfg.Addr = net.JoinHostPort(host, strconv.Itoa(port))
 	cfg.DBName = info.Database
 	cfg.ParseTime = true
 	for k, v := range info.Options {
@@ -60,6 +65,72 @@ func buildMySQLDSN(info ConnInfo) string {
 		cfg.Params[k] = v
 	}
 	return cfg.FormatDSN()
+}
+
+func mysqlURLToDSN(raw string, info ConnInfo) (string, error) {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", err
+	}
+	cfg := mysql.NewConfig()
+	cfg.Net = "tcp"
+	cfg.User = u.User.Username()
+	if cfg.User == "" {
+		cfg.User = info.User
+	}
+	if pw, ok := u.User.Password(); ok {
+		cfg.Passwd = pw
+	} else {
+		cfg.Passwd = info.Password
+	}
+	host := u.Hostname()
+	if host == "" {
+		host = info.Host
+	}
+	if host == "" {
+		host = "localhost"
+	}
+	port := u.Port()
+	if port == "" && info.Port > 0 {
+		port = strconv.Itoa(info.Port)
+	}
+	if port == "" {
+		port = "3306"
+	}
+	cfg.Addr = net.JoinHostPort(host, port)
+	cfg.DBName = strings.TrimPrefix(u.Path, "/")
+	if cfg.DBName == "" {
+		cfg.DBName = info.Database
+	}
+	cfg.ParseTime = true
+	for k, vals := range u.Query() {
+		if len(vals) == 0 {
+			continue
+		}
+		if k == "parseTime" {
+			if parseTime, err := strconv.ParseBool(vals[len(vals)-1]); err == nil {
+				cfg.ParseTime = parseTime
+			}
+			continue
+		}
+		if cfg.Params == nil {
+			cfg.Params = map[string]string{}
+		}
+		cfg.Params[k] = vals[len(vals)-1]
+	}
+	for k, v := range info.Options {
+		if k == "parseTime" {
+			if parseTime, err := strconv.ParseBool(v); err == nil {
+				cfg.ParseTime = parseTime
+			}
+			continue
+		}
+		if cfg.Params == nil {
+			cfg.Params = map[string]string{}
+		}
+		cfg.Params[k] = v
+	}
+	return cfg.FormatDSN(), nil
 }
 
 type mysqlConn struct {

@@ -330,9 +330,13 @@ list, and auto-connects.
 
 ## Saved Connection Format (`sqwee.json`)
 
-Connections sqwee saves live in `~/.config/delbysoft/sqwee.json`. This is the
-exact shape the app reads and writes (passwords reference an env var by default;
-set `password` directly only if you accept plaintext storage):
+Connections sqwee saves live in `~/.config/delbysoft/sqwee.json`. String fields
+are literal by default, but may use inline env-file references. The prefix is the
+`.env*` filename without its leading dot: `env:PGHOST` maps to `.env`,
+`env-dev:PGHOST` maps to `.env-dev`, and `env.example:PGHOST` maps to
+`.env.example`. The canonical `env:KEY` form also falls back to the process
+environment. Unresolved references are highlighted in the UI but remain valid raw
+values.
 
 ```json
 {
@@ -344,7 +348,16 @@ set `password` directly only if you accept plaintext storage):
       "port": 5432,
       "user": "postgres",
       "database": "app_dev",
-      "password_env": "PGPASSWORD"
+      "password": "env:PGPASSWORD"
+    },
+    {
+      "name": "dev-postgres",
+      "driver": "postgres",
+      "host": "env-dev:PGHOST",
+      "port_env": "env-dev:PGPORT",
+      "user": "env-dev:PGUSER",
+      "database": "env-dev:PGDATABASE",
+      "password": "env-dev:PGPASSWORD"
     },
     {
       "name": "scratch",
@@ -360,8 +373,11 @@ set `password` directly only if you accept plaintext storage):
 }
 ```
 
-A saved entry is turned into a `driver.ConnInfo` at connect time, resolving the
-password from `password_env` when `password` is empty.
+A saved entry is turned into a `driver.ConnInfo` at connect time, resolving
+inline env references on URL, host, port, user, password and database. `port_env`
+is used for env-backed ports because `port` remains a JSON number for existing
+saved connections. Legacy `password_env` is still supported when `password` is
+empty.
 
 ---
 

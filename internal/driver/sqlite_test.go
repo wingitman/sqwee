@@ -127,6 +127,18 @@ func TestSQLiteMissingPath(t *testing.T) {
 	}
 }
 
+func TestSQLitePathFromURLAndHostFallback(t *testing.T) {
+	if got := SQLitePath(ConnInfo{URL: "sqlite:///srv/timid/timid.sqlite"}); got != "/srv/timid/timid.sqlite" {
+		t.Fatalf("path from sqlite URL = %q", got)
+	}
+	if got := SQLitePath(ConnInfo{URL: "file:///srv/timid/timid.sqlite"}); got != "/srv/timid/timid.sqlite" {
+		t.Fatalf("path from file URL = %q", got)
+	}
+	if got := SQLitePath(ConnInfo{Host: "/srv/timid/timid.sqlite"}); got != "/srv/timid/timid.sqlite" {
+		t.Fatalf("path from host fallback = %q", got)
+	}
+}
+
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }

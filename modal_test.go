@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -128,5 +129,27 @@ func TestModalSelectorCycles(t *testing.T) {
 	m, _, _ = m.Update(keyMsg("k"))
 	if m.focused != 0 {
 		t.Errorf("expected k on selector to move to field 0, got %d", m.focused)
+	}
+}
+
+func TestModalSkipsConditionallyHiddenFields(t *testing.T) {
+	keys := NewKeyMap(defaultConfig())
+	m := NewModal(ModalAddConnection, "Test", []ModalField{
+		{Label: "Gateway", Kind: FieldSelect, Options: []string{"none", "ssh"}, Value: "none"},
+		{Label: "Gateway host", VisibleWhen: &FieldCondition{Field: 0, Value: "ssh"}},
+		{Label: "Name"},
+	}, 60, keys)
+
+	if strings.Contains(m.View(), "Gateway host") {
+		t.Fatalf("hidden field rendered: %q", m.View())
+	}
+	m, _, _ = m.Update(keyMsg("tab"))
+	if m.focused != 2 {
+		t.Fatalf("tab should skip hidden field, focused %d", m.focused)
+	}
+	m, _, _ = m.Update(tea.KeyPressMsg{Mod: tea.ModShift, Code: tea.KeyTab})
+	m, _, _ = m.Update(keyMsg("l"))
+	if !strings.Contains(m.View(), "Gateway host") {
+		t.Fatalf("conditional field did not render after selector change: %q", m.View())
 	}
 }

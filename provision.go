@@ -298,8 +298,13 @@ func (m Model) finishProvision(msg provisionDoneMsg) (tea.Model, tea.Cmd) {
 		saved.Options = map[string]string{"docker_container": msg.result.Container}
 	}
 
-	m.data.Connections = append(m.data.Connections, saved)
-	_ = SaveData(m.data)
+	next := AppData{Connections: append([]SavedConnection(nil), m.data.Connections...)}
+	next.Connections = append(next.Connections, saved)
+	if err := SaveData(next); err != nil {
+		m.statusMsg = errorStyle.Render("Database created, but saving connection failed: " + err.Error())
+		return m, nil
+	}
+	m.data = next
 	m.rebuildConnections()
 
 	// Select the new connection.

@@ -46,6 +46,7 @@ type Model struct {
 	// Connections tab
 	conns      []connItem
 	connCursor int
+	envSources []EnvSource
 	activeConn *driver.ConnInfo // the connection driving Schema/Query tabs
 	conn       driver.Conn      // live connection (nil when disconnected)
 	connecting bool
@@ -114,7 +115,10 @@ func NewModel() (Model, error) {
 		// Non-fatal: fall back to defaults so the app still launches.
 		cfg = defaultConfig()
 	}
-	data, _ := LoadData()
+	data, err := LoadData()
+	if err != nil {
+		return Model{}, err
+	}
 
 	ed := textarea.New()
 	ed.Placeholder = "SELECT * FROM ..."
@@ -143,8 +147,9 @@ func NewModel() (Model, error) {
 func (m *Model) rebuildConnections() {
 	var items []connItem
 	savedKeys := map[string]bool{}
+	m.envSources = discoverEnvSources()
 	for _, s := range m.data.Connections {
-		info := s.toConnInfo()
+		info := s.toConnInfoWithEnv(m.envSources)
 		items = append(items, connItem{info: info, saved: true})
 		savedKeys[connKey(info)] = true
 	}
@@ -213,12 +218,20 @@ func connectCmd(info driver.ConnInfo) tea.Cmd {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		conn, err := d.Connect(ctx, info)
+		conn, err := connectThroughGateway(ctx, d, info)
 		if err != nil {
-			return connectErrMsg{err: err.Error()}
+			return connectErrMsg{err: formatConnectError(err)}
 		}
 		return connectedMsg{info: info, conn: conn}
 	}
+}
+
+func formatConnectError(err error) string {
+	msg := err.Error()
+	if strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "context deadline exceeded") {
+		return "connection timed out reaching the database. Check host, port, VPN/VPC routing, firewall or security group allowlists, and whether the database is publicly accessible. Original error: " + msg
+	}
+	return msg
 }
 
 func loadSchemaCmd(conn driver.Conn) tea.Cmd {

@@ -11,10 +11,10 @@ Built with [Bubble Tea](https://github.com/charmbracelet/bubbletea) and [Lip Glo
 ## Features
 
 - **Three-tab UI** — Connections, Schema, and Query, cycled with `Tab` / `Shift+Tab`
-- **Auto-discovery** — finds connections in `DATABASE_URL`, `PG*` / `MYSQL_*` env vars, `.env` files (incl. `DATABASE_PATH` SQLite paths), `~/.pgpass`, **local `*.sqlite` / `*.db` files in the working directory**, and **DB servers listening on localhost**
+- **Auto-discovery** — finds connections in `DATABASE_URL`, `PG*` / `MYSQL_*` env vars, `.env*` files (incl. `DATABASE_PATH` SQLite paths), `~/.pgpass`, **local `*.sqlite` / `*.db` files in the working directory**, and **DB servers listening on localhost**
 - **SQL script library** — discovers `*.sql` files in the working directory and lets you load and run them (with T-SQL `GO` batch support)
 - **Initialize a database** — spin up a new database from scratch: a SQLite file, a `CREATE DATABASE` on a running server, or a fresh **Docker container** — then auto-save and connect to it
-- **Saved connections** — persisted to `~/.config/delbysoft/sqwee.json`; passwords referenced by env-var name (not stored in plaintext by default)
+- **Saved connections** — persisted to `~/.config/delbysoft/sqwee.json`; fields can be literals or `.env*` references like `env-dev:PGHOST`
 - **Schema browser** — tables, views, functions, and stored procedures with column details; **browse every database on a SQL Server instance**
 - **Query editor** — run arbitrary SQL with a scrollable, NULL-aware results grid; open the editor in `$EDITOR`
 - **Object definitions** — load `CREATE` DDL for any object straight into the editor
@@ -135,7 +135,7 @@ From the **Connections** tab, press `i` to create a brand-new database from scra
 3. **Configure** — fill in the connection settings (file path, or host/port/admin-user/password/new-database-name).
 4. **Confirm** — review a summary of what will be created. Press `y` to **copy the config** to your clipboard, then `Enter` to proceed.
 
-sqwee then creates the database, **saves a connection** to it (in `sqwee.json`, with the password referenced by an env-var name), adds it to your connection list, and **auto-connects** so its schema appears in the Schema tab.
+sqwee then creates the database, **saves a connection** to it in `sqwee.json`, adds it to your connection list, and **auto-connects** so its schema appears in the Schema tab.
 
 **Docker mode** requires the `docker` CLI and a running daemon. sqwee runs `docker run` with the official image for the engine (`postgres:16`, `mysql:8`, `mcr.microsoft.com/mssql/server:2022-latest`), waits for the server to accept connections, then issues `CREATE DATABASE`. The container name and generated password are shown in the result. If Docker isn't available, the file/server modes still work.
 
@@ -150,7 +150,7 @@ On startup (and on `r` in the Connections tab) sqwee scans, non-destructively:
 - `DATABASE_URL` — any `postgres://`, `mysql://`, `sqlserver://`, or `sqlite://` URL
 - `PGHOST` / `PGPORT` / `PGUSER` / `PGPASSWORD` / `PGDATABASE`
 - `MYSQL_HOST` / `MYSQL_TCP_PORT` / `MYSQL_USER` / `MYSQL_PWD` / `MYSQL_DATABASE`
-- a `.env` file in the working directory — `*DATABASE_URL` / `*DB_URL` URLs **and** SQLite paths from `*DATABASE_PATH` / `*DB_PATH` / `SQLITE*` keys
+- `.env*` files in the working directory — `*DATABASE_URL` / `*DB_URL` URLs **and** SQLite paths from `*DATABASE_PATH` / `*DB_PATH` / `SQLITE*` keys
 - `~/.pgpass` (`host:port:database:user:password`)
 - **`*.sqlite` / `*.sqlite3` / `*.db` files** in the working directory
 - **listening DB servers** on `localhost` (`1433` SQL Server, `5432` Postgres, `3306` MySQL)
@@ -209,7 +209,7 @@ file_explorer = ""   # optional folder opener; empty uses OS default
 
 [discovery]
 scan_env    = true   # scan DATABASE_URL / PG* / MYSQL_* env vars
-scan_dotenv = true   # scan .env files in the working directory
+scan_dotenv = true   # scan .env* files in the working directory
 scan_pgpass = true   # scan ~/.pgpass for Postgres connections
 scan_sqlite = true   # scan the working directory for *.sqlite / *.db files
 scan_sql    = true   # import *.sql script files from the working directory
@@ -218,7 +218,15 @@ scan_ports  = true   # detect DB servers listening on localhost (1433/5432/3306)
 
 ### Saved connections (`sqwee.json`)
 
-Connections you add are stored next to the config in `sqwee.json`. By default the password is **not** stored in plaintext — instead the name of an environment variable is recorded and resolved at connect time:
+Connections you add are stored next to the config in `sqwee.json`. Connection fields are literal by default. To resolve a value from a project env file, use `<env-file-alias>:<KEY>`, where the alias is the `.env*` filename without the leading dot:
+
+- `env:PGPASSWORD` resolves from `.env`, then falls back to the process environment.
+- `env-dev:PGPASSWORD` resolves from `.env-dev`.
+- `env.example:PGPASSWORD` resolves from `.env.example`.
+
+Unresolved env references are highlighted in the Connections detail panel but do not block saving; sqwee keeps the raw value you entered.
+
+SSH gateways support password auth or private-key auth via `gateway.key_file`. For SQLite connections, a gateway runs the remote `sqlite3` CLI against the remote database file, so the EC2/server host must have `sqlite3` installed.
 
 ```json
 {
@@ -230,7 +238,27 @@ Connections you add are stored next to the config in `sqwee.json`. By default th
       "port": 5432,
       "user": "postgres",
       "database": "app_dev",
-      "password_env": "PGPASSWORD"
+      "password": "env-dev:PGPASSWORD"
+    },
+    {
+      "name": "dev-postgres",
+      "driver": "postgres",
+      "host": "env-dev:PGHOST",
+      "port_env": "env-dev:PGPORT",
+      "user": "env-dev:PGUSER",
+      "database": "env-dev:PGDATABASE",
+      "password": "env-dev:PGPASSWORD"
+    },
+    {
+      "name": "timid-ec2",
+      "driver": "sqlite",
+      "database": "/srv/timid/timid.sqlite",
+      "gateway": {
+        "type": "ssh",
+        "host": "ec2.example.com",
+        "user": "ubuntu",
+        "key_file": "~/Work/timid/timid.pem"
+      }
     }
   ]
 }
@@ -241,6 +269,36 @@ Connections you add are stored next to the config in `sqwee.json`. By default th
 ## Custom drivers
 
 sqwee's driver system is pluggable. See **[SPEC.md](SPEC.md)** for the full interface specification — you can add support for any database (Oracle, ClickHouse, DuckDB, etc.) by implementing the `Driver` interface in Go and dropping a file into `internal/driver/`.
+
+---
+
+## Tests
+
+The default suite is self-contained and safe to run without Docker or network access:
+
+```bash
+go test ./...
+```
+
+Live database tests are opt-in because they start containers or connect to real services:
+
+```bash
+# Docker-hosted Postgres/MySQL/SQL Server smoke tests.
+SQWEE_TEST_DOCKER=1 go test ./internal/driver -run DockerDatabaseIntegration
+
+# Limit Docker tests to a subset.
+SQWEE_TEST_DOCKER=1 SQWEE_TEST_DOCKER_DRIVERS=postgres,mysql go test ./internal/driver -run DockerDatabaseIntegration
+
+# Locally hosted databases.
+SQWEE_TEST_LOCAL_POSTGRES_URL='postgres://user:pass@localhost:5432/app?sslmode=disable' go test ./internal/driver -run LocalDatabaseURLIntegration
+SQWEE_TEST_LOCAL_MYSQL_URL='mysql://user:pass@localhost:3306/app' go test ./internal/driver -run LocalDatabaseURLIntegration
+SQWEE_TEST_LOCAL_MSSQL_URL='sqlserver://user:pass@localhost:1433?database=app' go test ./internal/driver -run LocalDatabaseURLIntegration
+
+# Externally hosted databases, such as AWS RDS.
+SQWEE_TEST_EXTERNAL_POSTGRES_URL='postgres://user:pass@db.example.rds.amazonaws.com:5432/app?sslmode=require' go test ./internal/driver -run ExternalDatabaseURLIntegration
+```
+
+URL integration tests create and drop a temporary `sqwee_smoke_*` table in the target database, so point them at a disposable test database/user.
 
 ---
 

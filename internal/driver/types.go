@@ -35,6 +35,9 @@ type ConnInfo struct {
 	// Options holds extra driver-specific key/value settings (sslmode, etc.).
 	Options map[string]string
 
+	// Gateway optionally describes an SSH gateway used to reach Host:Port.
+	Gateway GatewayInfo
+
 	// Source records where this connection was found ("saved", "env",
 	// ".env", ".pgpass", "file", "detected", ...). Purely informational.
 	Source string
@@ -42,6 +45,17 @@ type ConnInfo struct {
 	// NeedsCred marks a connection that was detected (e.g. a listening server)
 	// but has no credentials yet. The UI prompts for them before connecting.
 	NeedsCred bool
+}
+
+// GatewayInfo describes an optional network gateway for database connections.
+// Currently only Type "ssh" is supported.
+type GatewayInfo struct {
+	Type     string
+	Host     string
+	Port     int
+	User     string
+	Password string
+	KeyFile  string
 }
 
 // Schema is a namespace within a database (a "schema" in Postgres/SQL Server,

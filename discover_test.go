@@ -54,12 +54,38 @@ func TestDiscoverFromDotenvSQLitePath(t *testing.T) {
 func TestDiscoverFromDotenvURL(t *testing.T) {
 	dir := t.TempDir()
 	writeFile(t, filepath.Join(dir, ".env"),
-		"DATABASE_URL=postgres://u:p@localhost:5432/app\n")
+		"DATABASE_URL=postgres://u:p@localhost:5432/app?sslmode=require\n")
 
 	withWD(t, dir, func() {
 		got := discoverFromDotenv()
 		if len(got) != 1 || got[0].Driver != "postgres" {
 			t.Fatalf("expected postgres conn, got %v", got)
+		}
+		if got[0].Options["sslmode"] != "require" {
+			t.Fatalf("sslmode option = %q", got[0].Options["sslmode"])
+		}
+	})
+}
+
+func TestDiscoverFromDotenvScansEnvStarFiles(t *testing.T) {
+	dir := t.TempDir()
+	writeFile(t, filepath.Join(dir, ".env"), "DATABASE_URL=postgres://u:p@localhost:5432/app\n")
+	writeFile(t, filepath.Join(dir, ".env-dev"), "DATABASE_URL=mysql://u:p@localhost:3306/dev\n")
+	writeFile(t, filepath.Join(dir, ".env.example"), "DATABASE_PATH=./example.sqlite\n")
+
+	withWD(t, dir, func() {
+		got := discoverFromDotenv()
+		if len(got) != 3 {
+			t.Fatalf("expected 3 discovered conns, got %d: %v", len(got), got)
+		}
+		sources := map[string]bool{}
+		for _, ci := range got {
+			sources[ci.Source] = true
+		}
+		for _, want := range []string{".env:DATABASE_URL", ".env-dev:DATABASE_URL", ".env.example:DATABASE_PATH"} {
+			if !sources[want] {
+				t.Fatalf("missing source %q in %v", want, sources)
+			}
 		}
 	})
 }

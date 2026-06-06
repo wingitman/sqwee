@@ -46,7 +46,9 @@ func buildPostgresDSN(info ConnInfo) string {
 	u := url.URL{
 		Scheme: "postgres",
 		Host:   fmt.Sprintf("%s:%d", host, port),
-		Path:   "/" + info.Database,
+	}
+	if info.Database != "" {
+		u.Path = "/" + info.Database
 	}
 	if info.User != "" {
 		if info.Password != "" {

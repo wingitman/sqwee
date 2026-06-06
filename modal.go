@@ -32,6 +32,13 @@ type ModalField struct {
 	Kind        ModalFieldKind // text or selector
 	Options     []string       // selector options (Kind == FieldSelect)
 	Password    bool           // mask input
+	VisibleWhen *FieldCondition
+}
+
+// FieldCondition hides a field unless another field has the required value.
+type FieldCondition struct {
+	Field int
+	Value string
 }
 
 // ModalKind identifies what the modal is for, used to route the confirm message.
@@ -73,6 +80,7 @@ type Modal struct {
 	kinds   []ModalFieldKind
 	options [][]string
 	selIdx  []int // current selection index per field (selectors only)
+	visible []*FieldCondition
 	focused int
 	Width   int
 	keys    KeyMap // honoured for navigation/confirm/cancel; remappable
@@ -94,6 +102,7 @@ func NewModal(kind ModalKind, title string, fields []ModalField, width int, keys
 	kinds := make([]ModalFieldKind, n)
 	options := make([][]string, n)
 	selIdx := make([]int, n)
+	visible := make([]*FieldCondition, n)
 
 	for i, f := range fields {
 		ti := textinput.New()
@@ -110,6 +119,7 @@ func NewModal(kind ModalKind, title string, fields []ModalField, width int, keys
 		labels[i] = f.Label
 		kinds[i] = f.Kind
 		options[i] = f.Options
+		visible[i] = f.VisibleWhen
 		// Resolve initial selector index from Value if present.
 		if f.Kind == FieldSelect {
 			for j, opt := range f.Options {
@@ -128,11 +138,54 @@ func NewModal(kind ModalKind, title string, fields []ModalField, width int, keys
 		kinds:   kinds,
 		options: options,
 		selIdx:  selIdx,
+		visible: visible,
 		Width:   width,
 		keys:    keys,
 	}
-	m.focusField(0)
+	m.focusField(m.firstVisibleField())
 	return m
+}
+
+func (m *Modal) fieldVisible(i int) bool {
+	if i < 0 || i >= len(m.inputs) {
+		return false
+	}
+	cond := m.visible[i]
+	if cond == nil {
+		return true
+	}
+	if cond.Field < 0 || cond.Field >= len(m.inputs) {
+		return true
+	}
+	return m.valueAt(cond.Field) == cond.Value
+}
+
+func (m *Modal) valueAt(i int) string {
+	if m.kinds[i] == FieldSelect {
+		if len(m.options[i]) > 0 {
+			return m.options[i][m.selIdx[i]]
+		}
+		return ""
+	}
+	return m.inputs[i].Value()
+}
+
+func (m *Modal) firstVisibleField() int {
+	for i := range m.inputs {
+		if m.fieldVisible(i) {
+			return i
+		}
+	}
+	return 0
+}
+
+func (m *Modal) lastVisibleField() int {
+	for i := len(m.inputs) - 1; i >= 0; i-- {
+		if m.fieldVisible(i) {
+			return i
+		}
+	}
+	return 0
 }
 
 func (m *Modal) focusField(i int) {
@@ -151,20 +204,20 @@ func (m *Modal) advance(delta int) {
 	if n == 0 {
 		return
 	}
-	m.focusField((m.focused + delta + n) % n)
+	for step := 1; step <= n; step++ {
+		next := (m.focused + delta*step + n*step) % n
+		if m.fieldVisible(next) {
+			m.focusField(next)
+			return
+		}
+	}
 }
 
 // values returns the current field values (selector → selected option string).
 func (m *Modal) values() []string {
 	out := make([]string, len(m.inputs))
 	for i := range m.inputs {
-		if m.kinds[i] == FieldSelect {
-			if len(m.options[i]) > 0 {
-				out[i] = m.options[i][m.selIdx[i]]
-			}
-		} else {
-			out[i] = m.inputs[i].Value()
-		}
+		out[i] = m.valueAt(i)
 	}
 	return out
 }
@@ -216,7 +269,7 @@ func (m Modal) Update(msg tea.Msg) (Modal, tea.Cmd, bool) {
 
 	// Confirm / advance (Enter).
 	if keyMatches(key, m.keys.Enter) {
-		if m.focused == len(m.inputs)-1 {
+		if m.focused == m.lastVisibleField() {
 			vals := m.values()
 			kind := m.Kind
 			return m, func() tea.Msg { return modalConfirmMsg{kind: kind, values: vals} }, true
@@ -299,6 +352,9 @@ func (m Modal) View() string {
 	}
 
 	for i := range m.inputs {
+		if !m.fieldVisible(i) {
+			continue
+		}
 		label := m.labels[i]
 		if i == m.focused {
 			b.WriteString(labelFocusedStyle.Render(label + ": "))

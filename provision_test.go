@@ -81,7 +81,9 @@ func TestWizardConfigureToConfirm(t *testing.T) {
 
 func TestFinishProvisionSavesAndSelects(t *testing.T) {
 	// Use a temp config dir so SaveData writes somewhere harmless.
-	t.Setenv("HOME", t.TempDir())
+	configHome := t.TempDir()
+	t.Setenv("HOME", configHome)
+	t.Setenv("XDG_CONFIG_HOME", configHome)
 
 	m := newTestModelForWizard(t)
 	m.wizard = initWizard{active: true, driver: "sqlite", connName: "prov-test", values: map[string]string{}}
