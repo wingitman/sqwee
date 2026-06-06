@@ -1,9 +1,10 @@
 BINARY      := sqwee
 INSTALL_DIR := $(HOME)/.local/bin
 BUILD_DIR   := bin
+RELEASES_DIR := releases
 COMMIT      := $(shell git rev-parse HEAD 2>/dev/null || printf dev)
 
-.PHONY: all build install uninstall clean run
+.PHONY: all build build-all install uninstall clean run
 
 all: build
 
@@ -12,12 +13,53 @@ build:
 	go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(BUILD_DIR)/$(BINARY) .
 	@echo "Built: $(BUILD_DIR)/$(BINARY)"
 
+build-all:
+	@mkdir -p $(RELEASES_DIR)/linux $(RELEASES_DIR)/darwin/amd64 $(RELEASES_DIR)/darwin/arm64 $(RELEASES_DIR)/windows
+	@echo "Building linux/amd64..."
+	GOOS=linux   GOARCH=amd64 go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(RELEASES_DIR)/linux/$(BINARY) .
+	@echo "Building darwin/amd64..."
+	GOOS=darwin  GOARCH=amd64 go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(RELEASES_DIR)/darwin/amd64/$(BINARY) .
+	@echo "Building darwin/arm64..."
+	GOOS=darwin  GOARCH=arm64 go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(RELEASES_DIR)/darwin/arm64/$(BINARY) .
+	@echo "Building windows/amd64..."
+	GOOS=windows GOARCH=amd64 go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(RELEASES_DIR)/windows/$(BINARY).exe .
+	@echo ""
+	@echo "Pre-built binaries written to $(RELEASES_DIR)/"
+	@echo "Commit these files so users without Go can install without building."
+
 run:
 	go run .
 
-install: build
+install:
 	@mkdir -p $(INSTALL_DIR)
-	cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY)
+	@if command -v go >/dev/null 2>&1; then \
+		echo "==> Go found - building sqwee from source..."; \
+		mkdir -p $(BUILD_DIR); \
+		go build -ldflags="-s -w -X main.Commit=$(COMMIT)" -o $(BUILD_DIR)/$(BINARY) . || exit 1; \
+		cp $(BUILD_DIR)/$(BINARY) $(INSTALL_DIR)/$(BINARY); \
+		echo "    Built and installed from source."; \
+	else \
+		echo "==> Go not found - installing pre-built binary from releases/..."; \
+		OS=$$(uname -s | tr '[:upper:]' '[:lower:]'); \
+		ARCH=$$(uname -m); \
+		if [ "$$OS" = "darwin" ]; then \
+			if [ "$$ARCH" = "arm64" ]; then \
+				RELEASE_BIN="$(RELEASES_DIR)/darwin/arm64/$(BINARY)"; \
+			else \
+				RELEASE_BIN="$(RELEASES_DIR)/darwin/amd64/$(BINARY)"; \
+			fi; \
+		else \
+			RELEASE_BIN="$(RELEASES_DIR)/linux/$(BINARY)"; \
+		fi; \
+		if [ ! -f "$$RELEASE_BIN" ]; then \
+			echo "ERROR: Pre-built binary not found at $$RELEASE_BIN"; \
+			echo "       Please install Go (https://go.dev/dl/) and re-run, or ask a developer to run 'make build-all' and commit the releases/ folder."; \
+			exit 1; \
+		fi; \
+		cp "$$RELEASE_BIN" $(INSTALL_DIR)/$(BINARY); \
+		chmod +x $(INSTALL_DIR)/$(BINARY); \
+		echo "    Installed pre-built binary."; \
+	fi
 	@echo ""
 	@echo "  sqwee installed to $(INSTALL_DIR)/$(BINARY)"
 	@echo ""

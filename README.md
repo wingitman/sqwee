@@ -34,7 +34,7 @@ cd sqwee
 make install
 ```
 
-`make install` builds the binary, copies it to `~/.local/bin/sqwee`, and tells you if `~/.local/bin` needs to be added to your `PATH`.
+`make install` installs `sqwee` to `~/.local/bin/sqwee` and tells you if `~/.local/bin` needs to be added to your `PATH`. If Go is installed, it builds from source; otherwise it installs the pre-built binary from `releases/`.
 
 ### Windows
 
@@ -44,14 +44,14 @@ cd sqwee
 .\install.ps1
 ```
 
-`install.ps1` builds the binary, installs it to `%LOCALAPPDATA%\Programs\sqwee\sqwee.exe`, and adds that directory to your user `PATH` via the registry (no admin required).
+`install.ps1` installs `sqwee` to `%LOCALAPPDATA%\Programs\sqwee\sqwee.exe` and adds that directory to your user `PATH` via the registry (no admin required). If Go is installed, it builds from source; otherwise it installs the pre-built binary from `releases\windows\sqwee.exe`.
 
 > **Execution policy:** if you see a policy error, run once as your user:
 > ```powershell
 > Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 > ```
 
-Both installers require [Go 1.22+](https://go.dev/dl/).
+No Go install is required unless you want to build from source or refresh the pre-built binaries.
 
 ### Quick run (no install)
 
@@ -309,7 +309,21 @@ make build      # builds bin/sqwee with the current commit baked in
 make clean
 ```
 
-The module is CGO-free, so cross-compilation is a plain `GOOS=... GOARCH=... go build`.
+Building from source requires [Go 1.26+](https://go.dev/dl/).
+
+### Refreshing release binaries
+
+Run this before committing when source has changed, to refresh the pre-built binaries that users without Go install from:
+
+```bash
+# Linux/macOS
+make build-all
+
+# Windows PowerShell
+.\install.ps1 -BuildAll
+```
+
+This cross-compiles to `releases/linux/`, `releases/darwin/amd64/`, `releases/darwin/arm64/`, and `releases/windows/`. Commit the results.
 
 ---
 
