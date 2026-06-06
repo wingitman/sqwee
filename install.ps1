@@ -70,7 +70,8 @@ if ($BuildAll) {
     $LdFlags = "-s -w -X main.Commit=$Commit"
 
     $Targets = @(
-        @{ GOOS = 'linux';   GOARCH = 'amd64'; Out = 'releases\linux\sqwee'        },
+        @{ GOOS = 'linux';   GOARCH = 'amd64'; Out = 'releases\linux\amd64\sqwee'  },
+        @{ GOOS = 'linux';   GOARCH = 'arm64'; Out = 'releases\linux\arm64\sqwee'  },
         @{ GOOS = 'darwin';  GOARCH = 'amd64'; Out = 'releases\darwin\amd64\sqwee' },
         @{ GOOS = 'darwin';  GOARCH = 'arm64'; Out = 'releases\darwin\arm64\sqwee' },
         @{ GOOS = 'windows'; GOARCH = 'amd64'; Out = 'releases\windows\sqwee.exe'  }

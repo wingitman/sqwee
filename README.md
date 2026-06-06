@@ -34,7 +34,7 @@ cd sqwee
 make install
 ```
 
-`make install` installs `sqwee` to `~/.local/bin/sqwee` and tells you if `~/.local/bin` needs to be added to your `PATH`. If Go is installed, it builds from source; otherwise it installs the pre-built binary from `releases/`.
+`make install` installs `sqwee` to `~/.local/bin/sqwee` and tells you if `~/.local/bin` needs to be added to your `PATH`. If Go is installed, it builds from source; otherwise it installs the matching pre-built binary from `releases/`.
 
 ### Windows
 
@@ -51,7 +51,7 @@ cd sqwee
 > Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 > ```
 
-No Go install is required unless you want to build from source or refresh the pre-built binaries.
+No Go install is required on supported pre-built platforms unless you want to build from source or refresh the pre-built binaries.
 
 ### Quick run (no install)
 
@@ -323,7 +323,7 @@ make build-all
 .\install.ps1 -BuildAll
 ```
 
-This cross-compiles to `releases/linux/`, `releases/darwin/amd64/`, `releases/darwin/arm64/`, and `releases/windows/`. Commit the results.
+This cross-compiles to `releases/linux/amd64/`, `releases/linux/arm64/`, `releases/darwin/amd64/`, `releases/darwin/arm64/`, and `releases/windows/`. Commit the results.
 
 ---
 
