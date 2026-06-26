@@ -89,6 +89,8 @@ var listeningServers = []struct {
 	{8000, "dynamodb", "DynamoDB Local"},
 	{9042, "cassandra", "Cassandra"},
 	{9200, "elasticsearch", "Elasticsearch"},
+	// Specialised databases.
+	{3000, "tigerbeetle", "TigerBeetle"},
 }
 
 // discoverListeningServers probes well-known DB ports on localhost and returns a
@@ -243,6 +245,32 @@ func discoverFromEnv() []driver.ConnInfo {
 			}
 			break
 		}
+	}
+
+	// TigerBeetle: TB_ADDRESS (the client's own convention, e.g. "127.0.0.1:3000").
+	if addr := os.Getenv("TB_ADDRESS"); addr != "" {
+		host, portStr, splitErr := net.SplitHostPort(addr)
+		port := 3000
+		if splitErr == nil {
+			if n, err := strconv.Atoi(portStr); err == nil {
+				port = n
+			}
+		} else {
+			// Bare port number ("3000") — TigerBeetle's own default format.
+			if n, err := strconv.Atoi(addr); err == nil {
+				host = "localhost"
+				port = n
+			} else {
+				host = addr
+			}
+		}
+		out = append(out, driver.ConnInfo{
+			Name:   "TigerBeetle env",
+			Driver: "tigerbeetle",
+			Host:   host,
+			Port:   port,
+			Source: "env:TB_ADDRESS",
+		})
 	}
 
 	return out

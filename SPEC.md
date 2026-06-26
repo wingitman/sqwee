@@ -493,6 +493,73 @@ list, and auto-connects.
 
 - **Discovery:** reads `ELASTICSEARCH_URL`, `ELASTIC_URL`, `OPENSEARCH_URL` env vars; probes port 9200.
 
+### TigerBeetle (`tigerbeetle`)
+
+- **Schemes:** `tigerbeetle`, `tb`
+- **Default port:** 3000
+- **Backend:** `github.com/tigerbeetle/tigerbeetle-go`
+- **What it is:** A purpose-built financial accounting database implementing double-entry bookkeeping. Its data model contains exactly two entity types: **accounts** (ledger accounts with debit/credit balances) and **transfers** (transactions moving an amount between two accounts). There is no SQL.
+
+#### Connection
+
+| `ConnInfo` field | Meaning |
+|---|---|
+| `Host` + `Port` | Replica address — `host:port` (default `localhost:3000`) |
+| `URL` | `tigerbeetle://host:port` or `tb://host:port` |
+| `Options["cluster_id"]` | Cluster ID as a decimal string (default `"0"`) |
+| `Options["replicas"]` | Comma-separated replica addresses for multi-replica clusters |
+
+#### Schema browser
+
+- *Schemas* → single entry `"cluster"`
+- *Objects* → two fixed entries: `accounts` and `transfers`, both `KindTable`
+- *Columns* → static field schema for each entity type (see below)
+- *Definition* → human-readable field reference card for accounts or transfers
+
+**Account fields:** `id`, `ledger`, `code`, `flags`, `debits_pending`, `debits_posted`, `credits_pending`, `credits_posted`, `user_data_128`, `user_data_64`, `user_data_32`, `timestamp`
+
+**Transfer fields:** `id`, `debit_account_id`, `credit_account_id`, `amount`, `ledger`, `code`, `flags`, `pending_id`, `user_data_128`, `user_data_64`, `user_data_32`, `timeout`, `timestamp`
+
+All `Uint128` values (IDs, amounts, balances) are rendered as decimal strings.
+
+#### Query language (JSON envelope)
+
+Read operations (`Query`):
+
+```json
+{"operation":"query_accounts","ledger":1,"code":718,"limit":100}
+{"operation":"lookup_accounts","ids":["1","2"]}
+{"operation":"query_transfers","ledger":1,"code":1,"limit":50}
+{"operation":"lookup_transfers","ids":["1","2"]}
+{"operation":"get_account_transfers","account_id":"1","limit":100,"debits":true,"credits":true}
+{"operation":"get_account_balances","account_id":"1","limit":50}
+```
+
+Write operations (`Exec`):
+
+```json
+{"operation":"create_accounts","accounts":[{"id":"1","ledger":1,"code":718}]}
+{"operation":"create_transfers","transfers":[
+  {"id":"1","debit_account_id":"1","credit_account_id":"2","amount":"100","ledger":1,"code":1}
+]}
+```
+
+IDs and amounts are decimal strings. Values that fit in a `uint64` may also be plain JSON numbers.
+
+#### Provisioner
+
+- Single `docker` mode — starts `ghcr.io/tigerbeetle/tigerbeetle`.
+- TigerBeetle requires a two-step Docker startup (format then start), so the provisioner calls `docker` directly rather than using the shared helper.
+  1. `docker run --rm -v <data_dir>:/data tigerbeetle format --cluster=<id> --replica=0 --replica-count=1 /data/0_0.tigerbeetle`
+  2. `docker run -d -v <data_dir>:/data -p <port>:3000 --name <name> tigerbeetle start --addresses=0.0.0.0:3000 /data/0_0.tigerbeetle`
+- Data files are stored at `~/.config/delbysoft/tigerbeetle/<container-name>/`.
+- Wizard fields: container name, cluster ID (default `0`), host port (default `3000`).
+
+#### Discovery
+
+- Probes port 3000 on localhost.
+- Reads `TB_ADDRESS` env var — accepts `host:port`, a bare port number (e.g. `"3000"`), or just a hostname.
+
 ---
 
 ## Saved Connection Format (`sqwee.json`)

@@ -146,7 +146,7 @@ func TestMain(m *testing.M) {
 func TestAllBuiltinsRegistered(t *testing.T) {
 	want := []string{
 		"cassandra", "dynamodb", "elasticsearch",
-		"mongodb", "mssql", "mysql", "postgres", "redis", "sqlite",
+		"mongodb", "mssql", "mysql", "postgres", "redis", "sqlite", "tigerbeetle",
 	}
 	got := Names()
 	if len(got) != len(want) {
@@ -171,6 +171,9 @@ func TestAllBuiltinsRegistered(t *testing.T) {
 		"elasticsearch": "elasticsearch",
 		"es":            "elasticsearch",
 		"cql":           "cassandra",
+		// Specialised databases.
+		"tigerbeetle": "tigerbeetle",
+		"tb":          "tigerbeetle",
 	}
 	for scheme, drv := range cases {
 		d := ForScheme(scheme)
