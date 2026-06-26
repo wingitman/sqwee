@@ -83,6 +83,12 @@ var listeningServers = []struct {
 	{1433, "mssql", "SQL Server"},
 	{5432, "postgres", "PostgreSQL"},
 	{3306, "mysql", "MySQL"},
+	// NoSQL databases.
+	{27017, "mongodb", "MongoDB"},
+	{6379, "redis", "Redis"},
+	{8000, "dynamodb", "DynamoDB Local"},
+	{9042, "cassandra", "Cassandra"},
+	{9200, "elasticsearch", "Elasticsearch"},
 }
 
 // discoverListeningServers probes well-known DB ports on localhost and returns a
@@ -155,6 +161,90 @@ func discoverFromEnv() []driver.ConnInfo {
 		})
 	}
 
+	// ─── NoSQL env vars ───────────────────────────────────────────────────────
+
+	// MongoDB: MONGODB_URL, MONGO_URL, or MONGO_URI.
+	for _, key := range []string{"MONGODB_URL", "MONGO_URL", "MONGO_URI"} {
+		if u := os.Getenv(key); u != "" {
+			if ci, ok := parseURLConn(u, "env:"+key); ok {
+				out = append(out, ci)
+			}
+			break
+		}
+	}
+
+	// Redis: REDIS_URL, REDIS_URI, or REDIS_HOST.
+	redisHandled := false
+	for _, key := range []string{"REDIS_URL", "REDIS_URI"} {
+		if u := os.Getenv(key); u != "" {
+			if ci, ok := parseURLConn(u, "env:"+key); ok {
+				out = append(out, ci)
+			}
+			redisHandled = true
+			break
+		}
+	}
+	if !redisHandled {
+		if host := os.Getenv("REDIS_HOST"); host != "" {
+			port, _ := strconv.Atoi(os.Getenv("REDIS_PORT"))
+			if port == 0 {
+				port = 6379
+			}
+			db := os.Getenv("REDIS_DB")
+			if db == "" {
+				db = "0"
+			}
+			out = append(out, driver.ConnInfo{
+				Name:     "Redis env",
+				Driver:   "redis",
+				Host:     host,
+				Port:     port,
+				Password: os.Getenv("REDIS_PASSWORD"),
+				Database: db,
+				Source:   "env:REDIS_*",
+			})
+		}
+	}
+
+	// DynamoDB: detected when AWS_REGION (or AWS_DEFAULT_REGION) is set.
+	// For local DynamoDB the endpoint is taken from AWS_ENDPOINT_URL or
+	// DYNAMODB_ENDPOINT.
+	awsRegion := os.Getenv("AWS_REGION")
+	if awsRegion == "" {
+		awsRegion = os.Getenv("AWS_DEFAULT_REGION")
+	}
+	if awsRegion != "" {
+		opts := map[string]string{"aws_region": awsRegion}
+		if ep := os.Getenv("AWS_ENDPOINT_URL"); ep != "" {
+			opts["endpoint_url"] = ep
+		} else if ep := os.Getenv("DYNAMODB_ENDPOINT"); ep != "" {
+			opts["endpoint_url"] = ep
+		}
+		if k := os.Getenv("AWS_ACCESS_KEY_ID"); k != "" {
+			opts["aws_access_key_id"] = k
+			opts["aws_secret_access_key"] = os.Getenv("AWS_SECRET_ACCESS_KEY")
+			if t := os.Getenv("AWS_SESSION_TOKEN"); t != "" {
+				opts["aws_session_token"] = t
+			}
+		}
+		out = append(out, driver.ConnInfo{
+			Name:    "DynamoDB env (" + awsRegion + ")",
+			Driver:  "dynamodb",
+			Options: opts,
+			Source:  "env:AWS_*",
+		})
+	}
+
+	// Elasticsearch: ELASTICSEARCH_URL, ELASTIC_URL.
+	for _, key := range []string{"ELASTICSEARCH_URL", "ELASTIC_URL", "OPENSEARCH_URL"} {
+		if u := os.Getenv(key); u != "" {
+			if ci, ok := parseURLConn(u, "env:"+key); ok {
+				out = append(out, ci)
+			}
+			break
+		}
+	}
+
 	return out
 }
 
@@ -175,7 +265,10 @@ func discoverFromEnvSources(sources []EnvSource) []driver.ConnInfo {
 			}
 
 			switch {
-			case strings.HasSuffix(ukey, "DATABASE_URL") || strings.HasSuffix(ukey, "DB_URL"):
+			case strings.HasSuffix(ukey, "DATABASE_URL") || strings.HasSuffix(ukey, "DB_URL") ||
+				strings.HasSuffix(ukey, "MONGODB_URL") || strings.HasSuffix(ukey, "MONGO_URI") ||
+				strings.HasSuffix(ukey, "REDIS_URL") || strings.HasSuffix(ukey, "REDIS_URI") ||
+				strings.HasSuffix(ukey, "ELASTICSEARCH_URL") || strings.HasSuffix(ukey, "ELASTIC_URL"):
 				if ci, ok := parseURLConn(val, src.Name+":"+key); ok {
 					out = append(out, ci)
 				}

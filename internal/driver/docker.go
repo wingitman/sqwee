@@ -17,6 +17,9 @@ type dockerSpec struct {
 	ContainerPort int               // the port the DB listens on inside the container
 	HostPort      int               // the host port to publish it on
 	Name          string            // container name
+	// Cmd is appended after the image name in "docker run" so drivers can pass
+	// command-line arguments to the container process (e.g. redis-server flags).
+	Cmd []string
 }
 
 // dockerAvailable reports whether the docker CLI is installed and the daemon is
@@ -44,6 +47,7 @@ func runDockerContainer(ctx context.Context, spec dockerSpec) (string, error) {
 	}
 	args = append(args, "-p", fmt.Sprintf("%d:%d", spec.HostPort, spec.ContainerPort))
 	args = append(args, spec.Image)
+	args = append(args, spec.Cmd...)
 
 	var stderr bytes.Buffer
 	cmd := exec.CommandContext(ctx, "docker", args...)

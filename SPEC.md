@@ -326,6 +326,173 @@ list, and auto-connects.
   and `docker` (`mcr.microsoft.com/mssql/server:2022-latest`) modes. Docker
   generates a complexity-compliant SA password.
 
+### MongoDB (`mongodb`)
+
+- **Schemes:** `mongodb`, `mongodb+srv`
+- **Default port:** 27017
+- **Backend:** `go.mongodb.org/mongo-driver/v2`
+- **Connect:** uses `info.URL` if set, otherwise builds `mongodb://[user:pass@]host:port[/db]`.
+  `info.Database` sets the default database (falls back to `"test"`).
+- **Schema browser:**
+  - *Schemas* → databases (`ListDatabaseNames`)
+  - *Objects* → collections (`ListCollectionNames`), shown as `KindTable`
+  - *Columns* → field names sampled from up to 20 documents (`$sample`); `_id` is always first with `Key="PK"`
+  - *Definition* → `collStats` output as formatted JSON
+- **Query language** — MongoDB shell syntax:
+
+  ```
+  collection.find({filter})
+  collection.find({filter}, {projection})
+  collection.findOne({filter})
+  collection.aggregate([pipeline])
+  collection.countDocuments({filter})
+  mydb.collection.find({})          ← explicit database prefix
+  ```
+
+- **Exec language** — write operations in the same syntax:
+
+  ```
+  collection.insertOne({doc})
+  collection.insertMany([docs])
+  collection.updateOne({filter}, {update})
+  collection.updateMany({filter}, {update})
+  collection.deleteOne({filter})
+  collection.deleteMany({filter})
+  ```
+
+- **Discovery:** reads `MONGODB_URL`, `MONGO_URL`, `MONGO_URI` env vars; probes port 27017.
+
+---
+
+### Redis (`redis`)
+
+- **Schemes:** `redis`, `rediss` (TLS)
+- **Default port:** 6379
+- **Backend:** `github.com/redis/go-redis/v9`
+- **Connect:** uses `info.URL` if set (parsed by `redis.ParseURL`), otherwise builds from
+  `host:port`, `info.Password`, and `info.Database` (DB index as a string, e.g. `"0"`).
+- **Schema browser:**
+  - *Schemas* → logical databases 0 … N-1 (N from `CONFIG GET databases`, default 16)
+  - *Objects* → key-prefix groups: keys with a `:` are grouped as `prefix:*`; bare keys are listed individually (SCAN, up to 2000 keys)
+  - *Columns* → metadata columns: `key`, `type`, `ttl`, `encoding`, `size`
+  - *Definition* → full value dump: `GET` (string), `HGETALL` (hash), `LRANGE 0 99` (list), `SMEMBERS` (set), `ZRANGE 0 99 WITHSCORES` (sorted set)
+- **Query / Exec:** raw Redis commands, e.g. `GET mykey`, `HSET user:1 name Alice`.
+  List and hash replies are rendered as a two-column table; scalar replies as a single cell.
+- **Discovery:** reads `REDIS_URL`, `REDIS_URI`, `REDIS_HOST`/`REDIS_PORT` env vars; probes port 6379.
+
+---
+
+### DynamoDB (`dynamodb`)
+
+- **Schemes:** `dynamodb`
+- **Default port:** 0 (AWS-managed; 8000 for DynamoDB Local)
+- **Backend:** `github.com/aws/aws-sdk-go-v2/service/dynamodb`
+- **Connect:** loads AWS credentials from `ConnInfo.Options` (explicit keys) or falls back to
+  the standard AWS credential chain (env vars, `~/.aws/credentials`, IAM role).
+
+  | Option key              | Meaning |
+  |-------------------------|---------|
+  | `aws_region`            | AWS region (required; falls back to `AWS_REGION` / `AWS_DEFAULT_REGION`) |
+  | `aws_access_key_id`     | Access key (optional; env fallback) |
+  | `aws_secret_access_key` | Secret key (optional; env fallback) |
+  | `aws_session_token`     | Session token (optional) |
+  | `endpoint_url`          | Custom endpoint, e.g. `http://localhost:8000` for DynamoDB Local |
+
+  A URL of the form `dynamodb://localhost:8000` is treated as a local endpoint.
+
+- **Schema browser:**
+  - *Schemas* → single entry `"default"` (DynamoDB has no namespaces)
+  - *Objects* → all tables (`ListTables`), shown as `KindTable`
+  - *Columns* → key schema attributes (PK, SK) + GSI/LSI key attributes from `DescribeTable`
+  - *Definition* → `DescribeTable` output as formatted JSON
+- **Query / Exec language** — JSON operation envelope:
+
+  ```json
+  {"Operation":"Scan",  "TableName":"users","Limit":50}
+  {"Operation":"Query", "TableName":"orders",
+   "KeyConditionExpression":"pk = :pk",
+   "ExpressionAttributeValues":{":pk":{"S":"user#1"}}}
+  {"Operation":"GetItem","TableName":"users","Key":{"id":{"S":"abc"}}}
+  {"Operation":"PutItem","TableName":"users","Item":{"id":{"S":"abc"},"name":{"S":"Alice"}}}
+  {"Operation":"UpdateItem","TableName":"users","Key":{"id":{"S":"abc"}},
+   "UpdateExpression":"SET #n = :n",
+   "ExpressionAttributeNames":{"#n":"name"},
+   "ExpressionAttributeValues":{":n":{"S":"Bob"}}}
+  {"Operation":"DeleteItem","TableName":"users","Key":{"id":{"S":"abc"}}}
+  ```
+
+  All fields beyond `"Operation"` are passed verbatim to the AWS SDK input struct.
+
+- **Discovery:** reads `AWS_REGION` / `AWS_DEFAULT_REGION`; if `AWS_ENDPOINT_URL` or
+  `DYNAMODB_ENDPOINT` is set that endpoint is used. Probes port 8000 (DynamoDB Local).
+
+---
+
+### Cassandra (`cassandra`)
+
+- **Schemes:** `cassandra`, `cql`
+- **Default port:** 9042
+- **Backend:** `github.com/gocql/gocql`
+- **Connect:** parses host from `info.URL` or `info.Host`; `info.Database` sets the default keyspace.
+  Username/password authentication is supported via `info.User` / `info.Password`.
+- **Schema browser:**
+  - *Schemas* → keyspaces (`system_schema.keyspaces`)
+  - *Objects* → tables (`system_schema.tables`) + materialized views (`system_schema.views`), as `KindTable` / `KindView`
+  - *Columns* → columns from `system_schema.columns`; partition key → `Key="PK"`, clustering key → `Key="SK"`
+  - *Definition* → reconstructed `CREATE TABLE` CQL with `PRIMARY KEY` clause
+- **Query / Exec:** standard CQL — the existing query editor works unchanged.
+
+  ```cql
+  SELECT * FROM users WHERE id = 'abc'
+  INSERT INTO users (id, name) VALUES ('1', 'Alice')
+  CREATE TABLE events (id uuid PRIMARY KEY, ts timestamp, msg text)
+  ```
+
+- **Discovery:** probes port 9042.
+
+---
+
+### Elasticsearch (`elasticsearch`)
+
+- **Schemes:** `elasticsearch`, `es`
+- **Default port:** 9200
+- **Backend:** `github.com/elastic/go-elasticsearch/v8`
+- **Connect:** builds the client from `info.URL` (scheme normalised to `http://`) or
+  `info.Host` / `info.Port`. Extra options in `info.Options`:
+
+  | Option key | Meaning |
+  |------------|---------|
+  | `api_key`  | Elastic API key authentication |
+  | `cloud_id` | Elastic Cloud ID (overrides address) |
+  | `tls`      | `"true"` to use HTTPS for host/port connections |
+
+- **Schema browser:**
+  - *Schemas* → single entry `"default"`
+  - *Objects* → non-system indices (system indices starting with `.` are hidden), shown as `KindTable`
+  - *Columns* → top-level field mappings from the index mapping (`properties`), with field type
+  - *Definition* → `GET /<index>/_mapping` + `GET /<index>/_settings` merged as JSON
+- **Query language:**
+
+  ```
+  index_name {"query":{"match_all":{}}}
+  logs {"query":{"range":{"@timestamp":{"gte":"now-1h"}}}}
+  {"query":{"match":{"message":"error"}}}    ← searches all indices
+  ```
+
+  Results show `_index`, `_id`, `_score` meta columns followed by all `_source` fields.
+
+- **Exec language:**
+
+  ```
+  index  <index_name> <json-document>
+  delete <index_name> <doc_id>
+  create_index <name> [<settings-json>]
+  delete_index <name>
+  refresh [<index_name>]
+  ```
+
+- **Discovery:** reads `ELASTICSEARCH_URL`, `ELASTIC_URL`, `OPENSEARCH_URL` env vars; probes port 9200.
+
 ---
 
 ## Saved Connection Format (`sqwee.json`)

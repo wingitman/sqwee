@@ -144,7 +144,10 @@ func TestMain(m *testing.M) {
 }
 
 func TestAllBuiltinsRegistered(t *testing.T) {
-	want := []string{"mssql", "mysql", "postgres", "sqlite"}
+	want := []string{
+		"cassandra", "dynamodb", "elasticsearch",
+		"mongodb", "mssql", "mysql", "postgres", "redis", "sqlite",
+	}
 	got := Names()
 	if len(got) != len(want) {
 		t.Fatalf("expected %v, got %v", want, got)
@@ -154,12 +157,20 @@ func TestAllBuiltinsRegistered(t *testing.T) {
 			t.Errorf("driver[%d] = %q, want %q", i, got[i], n)
 		}
 	}
-	// Scheme resolution.
+	// Scheme resolution — SQL databases.
 	cases := map[string]string{
-		"postgresql": "postgres",
-		"mysql":      "mysql",
-		"sqlserver":  "mssql",
-		"sqlite3":    "sqlite",
+		"postgresql":    "postgres",
+		"mysql":         "mysql",
+		"sqlserver":     "mssql",
+		"sqlite3":       "sqlite",
+		// NoSQL databases.
+		"mongodb+srv":   "mongodb",
+		"redis":         "redis",
+		"dynamodb":      "dynamodb",
+		"cassandra":     "cassandra",
+		"elasticsearch": "elasticsearch",
+		"es":            "elasticsearch",
+		"cql":           "cassandra",
 	}
 	for scheme, drv := range cases {
 		d := ForScheme(scheme)
