@@ -56,7 +56,8 @@ type ConfigKeys struct {
 	OpenConfig string `toml:"open_config"`
 
 	// ── App-level ────────────────────────────────────────────────────────────
-	Quit string `toml:"quit"`
+	Quit  string `toml:"quit"`
+	Theme string `toml:"theme"`
 }
 
 // ConfigUI holds UI preferences.
@@ -83,6 +84,7 @@ type Config struct {
 	Keys      ConfigKeys      `toml:"keys"`
 	UI        ConfigUI        `toml:"ui"`
 	Discovery ConfigDiscovery `toml:"discovery"`
+	Themes    Themes          `toml:"themes"`
 }
 
 // defaultConfig returns the full set of defaults. Navigation defaults are
@@ -112,6 +114,7 @@ func defaultConfig() Config {
 			OpenEditor:  "E",
 			OpenConfig:  "o",
 			Quit:        "q",
+			Theme:       "T",
 		},
 		UI: ConfigUI{
 			SidebarWidth: 32,
@@ -127,6 +130,10 @@ func defaultConfig() Config {
 			ScanSQLite: true,
 			ScanSQL:    true,
 			ScanPorts:  true,
+		},
+		Themes: Themes{
+			ThemeName: "terminal",
+			ThemeFile: filepath.Join(configDir(), "themes.toml"),
 		},
 	}
 }
@@ -159,6 +166,7 @@ func LoadConfig() (Config, error) {
 		if wErr := writeConfigFile(path, cfg); wErr != nil {
 			return cfg, wErr
 		}
+		_ = EnsureThemesFile(cfg)
 		return cfg, nil
 	}
 
@@ -169,6 +177,13 @@ func LoadConfig() (Config, error) {
 	if configNeedsMigration(path) {
 		_ = writeConfigFile(path, cfg) // non-fatal
 	}
+	if cfg.Themes.ThemeName == "" {
+		cfg.Themes.ThemeName = defaultConfig().Themes.ThemeName
+	}
+	if cfg.Themes.ThemeFile == "" {
+		cfg.Themes.ThemeFile = defaultConfig().Themes.ThemeFile
+	}
+	_ = EnsureThemesFile(cfg)
 
 	return cfg, nil
 }
@@ -203,6 +218,9 @@ func configNeedsMigration(path string) bool {
 		}
 	}
 	if !strings.Contains(s, "[discovery]") {
+		return true
+	}
+	if !strings.Contains(s, "[themes]") || !strings.Contains(s, "theme_name") {
 		return true
 	}
 	return false
@@ -304,6 +322,7 @@ func buildConfigTOML(cfg Config) string {
 		"\n" +
 		"# ── App-level ────────────────────────────────────────────────────────────\n" +
 		"quit         = " + q(k.Quit) + "       # quit sqwee (Ctrl+C always works too)\n" +
+		"theme        = " + q(k.Theme) + "       # open theme picker\n" +
 		"\n" +
 		"[ui]\n" +
 		"sidebar_width = " + itoa(ui.SidebarWidth) + "   # width of the left list in columns\n" +
@@ -318,7 +337,22 @@ func buildConfigTOML(cfg Config) string {
 		"scan_pgpass = " + boolStr(d.ScanPgpass) + "   # scan ~/.pgpass for Postgres connections\n" +
 		"scan_sqlite = " + boolStr(d.ScanSQLite) + "   # scan the working directory for *.sqlite / *.db files\n" +
 		"scan_sql    = " + boolStr(d.ScanSQL) + "   # import *.sql script files from the working directory\n" +
-		"scan_ports  = " + boolStr(d.ScanPorts) + "   # detect DB servers listening on localhost (1433/5432/3306)\n"
+		"scan_ports  = " + boolStr(d.ScanPorts) + "   # detect DB servers listening on localhost (1433/5432/3306)\n" +
+		"\n[themes]\n" +
+		"theme_name = " + q(cfg.Themes.ThemeName) + "   # terminal, or a named theme from theme_file\n" +
+		"theme_file = " + q(cfg.Themes.ThemeFile) + "   # shared Delbysoft theme file\n" +
+		"# Optional overrides applied after the selected theme.\n" +
+		"# primary = \"#7D56F4\"\n" +
+		"# accent = \"#00D7AF\"\n" +
+		"# muted = \"#888888\"\n" +
+		"# error = \"#FF4672\"\n" +
+		"# success = \"#2ECC71\"\n" +
+		"# border = \"#333355\"\n" +
+		"# selected_background = \"#2A2A55\"\n" +
+		"# selected_foreground = \"#FAFAFA\"\n" +
+		"# brand_primary = \"#FAFAFA\"\n" +
+		"# brand_secondary = \"#5865F2\"\n" +
+		"# selector = \"#FAFAFA\"\n"
 }
 
 // ── KeyMap ────────────────────────────────────────────────────────────────────
@@ -348,7 +382,8 @@ type KeyMap struct {
 	OpenEditor  key.Binding
 	OpenConfig  key.Binding
 
-	Quit key.Binding
+	Quit  key.Binding
+	Theme key.Binding
 }
 
 func bindingFor(k, helpText string) key.Binding {
@@ -395,6 +430,7 @@ func NewKeyMap(cfg Config) KeyMap {
 		OpenEditor:  bindingFor(k.OpenEditor, "editor"),
 		OpenConfig:  bindingFor(k.OpenConfig, "config"),
 		Quit:        bindingForWithExtra(k.Quit, "quit", "ctrl+c"),
+		Theme:       bindingFor(k.Theme, "theme"),
 	}
 }
 

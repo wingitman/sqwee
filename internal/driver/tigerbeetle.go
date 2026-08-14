@@ -1,3 +1,5 @@
+//go:build cgo
+
 package driver
 
 // TigerBeetle driver for sqwee.

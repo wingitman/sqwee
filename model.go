@@ -87,6 +87,10 @@ type Model struct {
 	wizard initWizard
 
 	statusMsg string
+
+	themeMode   bool
+	themeCursor int
+	themeNames  []string
 }
 
 // initWizard holds state for the multi-step "Initialize database" flow.
@@ -115,6 +119,7 @@ func NewModel() (Model, error) {
 		// Non-fatal: fall back to defaults so the app still launches.
 		cfg = defaultConfig()
 	}
+	applyTheme(cfg)
 	data, err := LoadData()
 	if err != nil {
 		return Model{}, err
@@ -125,6 +130,8 @@ func NewModel() (Model, error) {
 	ed.ShowLineNumbers = true
 	ed.KeyMap.DeleteWordBackward = key.NewBinding(key.WithKeys("alt+backspace", "ctrl+w", "ctrl+backspace"), key.WithHelp("ctrl+backspace", "delete word backward"))
 
+	themeNames, _ := ThemeNames(cfg)
+
 	m := Model{
 		cfg:       cfg,
 		keys:      NewKeyMap(cfg),
@@ -134,6 +141,7 @@ func NewModel() (Model, error) {
 		results:   viewport.New(),
 		colCache:  map[string][]driver.Column{},
 		metaCache: map[string]driver.TableMetadata{},
+		themeNames: themeNames,
 	}
 	m.results.SoftWrap = false
 	m.rebuildConnections()
@@ -176,6 +184,61 @@ func connKey(ci driver.ConnInfo) string {
 		host = ci.URL
 	}
 	return ci.Driver + "|" + host + "|" + itoaSimple(ci.Port)
+}
+
+func applyTheme(cfg Config) {
+	theme := ResolveTheme(cfg)
+	ConfigureTheme(theme.Colors, theme.Terminal)
+}
+
+func (m Model) applySelectedTheme() (tea.Model, tea.Cmd) {
+	if m.themeCursor < 0 || m.themeCursor >= len(m.themeNames) {
+		m.themeMode = false
+		return m, nil
+	}
+	name := m.themeNames[m.themeCursor]
+	if err := SetThemeName(name); err != nil {
+		m.statusMsg = errorStyle.Render("Could not save theme: " + err.Error())
+		m.themeMode = false
+		return m, nil
+	}
+	m.cfg.Themes.ThemeName = name
+	applyTheme(m.cfg)
+	m.themeMode = false
+	m.statusMsg = successStyle.Render("theme: " + name)
+	return m, nil
+}
+
+func (m *Model) clampThemeCursor() {
+	if len(m.themeNames) == 0 {
+		m.themeCursor = 0
+		return
+	}
+	if m.themeCursor < 0 {
+		m.themeCursor = 0
+	}
+	if m.themeCursor >= len(m.themeNames) {
+		m.themeCursor = len(m.themeNames) - 1
+	}
+}
+
+func (m Model) updateTheme(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case keyMatches(msg, m.keys.Escape), keyMatches(msg, m.keys.Quit):
+		m.themeMode = false
+		return m, nil
+	case keyMatches(msg, m.keys.Up):
+		m.themeCursor--
+		m.clampThemeCursor()
+		return m, nil
+	case keyMatches(msg, m.keys.Down):
+		m.themeCursor++
+		m.clampThemeCursor()
+		return m, nil
+	case keyMatches(msg, m.keys.Enter):
+		return m.applySelectedTheme()
+	}
+	return m, nil
 }
 
 func (m Model) Init() tea.Cmd { return nil }
@@ -445,6 +508,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case configReloadedMsg:
 		m.cfg = msg.cfg
 		m.keys = NewKeyMap(msg.cfg)
+		applyTheme(msg.cfg)
+		m.themeNames, _ = ThemeNames(msg.cfg)
 		// Propagate new keys to an open modal so remaps apply live.
 		if m.modal != nil {
 			m.modal.keys = m.keys
@@ -532,6 +597,10 @@ func (m Model) handlePaste(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
+	if m.themeMode {
+		return m.updateTheme(msg)
+	}
+
 	// Modal takes precedence.
 	if m.modal != nil {
 		updated, cmd, done := m.modal.Update(msg)
@@ -602,6 +671,18 @@ func (m Model) handleKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 
 	case keyMatches(msg, m.keys.OpenConfig):
 		return m, openConfigCmd(m.cfg)
+
+	case keyMatches(msg, m.keys.Theme):
+		m.themeNames, _ = ThemeNames(m.cfg)
+		m.themeCursor = 0
+		for i, name := range m.themeNames {
+			if name == m.cfg.Themes.ThemeName {
+				m.themeCursor = i
+				break
+			}
+		}
+		m.themeMode = true
+		return m, nil
 	}
 
 	// Per-tab handling.
@@ -660,6 +741,13 @@ func (m Model) View() tea.View {
 		return v
 	}
 
+	if m.themeMode {
+		v := tea.NewView(m.renderThemeScreen())
+		v.AltScreen = true
+		v.MouseMode = tea.MouseModeCellMotion
+		return v
+	}
+
 	title := m.renderTitleBar()
 	tabs := m.renderTabBar()
 
@@ -684,6 +772,29 @@ func (m Model) View() tea.View {
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeCellMotion
 	return v
+}
+
+func (m Model) renderThemeScreen() string {
+	var b strings.Builder
+	b.WriteString(modalTitleStyle.Render("Themes"))
+	b.WriteString("\n")
+	b.WriteString(dimStyle.Render("Choose a theme and press Enter. Esc cancels."))
+	b.WriteString("\n\n")
+	for i, name := range m.themeNames {
+		line := "  " + name
+		if name == m.cfg.Themes.ThemeName {
+			line += dimStyle.Render("  (current)")
+		}
+		if i == m.themeCursor {
+			line = Selector.Render("▶ ") + line[2:]
+			if lipgloss.Width(line) < m.width {
+				line += strings.Repeat(" ", m.width-lipgloss.Width(line))
+			}
+			line = selectedItemStyle.Render(line)
+		}
+		b.WriteString(line + "\n")
+	}
+	return b.String()
 }
 
 func (m Model) renderTitleBar() string {
